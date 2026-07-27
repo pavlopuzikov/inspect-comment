@@ -1,0 +1,29 @@
+{
+  "name": "inspect-comment",
+  "version": "1.0.0",
+  "description": "Dev-only element inspector + comment tool: hover, click, comment, copy a precise element descriptor for design-review loops. Vanilla + React.",
+  "keywords": [
+    "devtools",
+    "inspector",
+    "design-review",
+    "annotate",
+    "feedback",
+    "element-picker"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "vanilla/inspect-comment.js",
+  "exports": {
+    "./vanilla": "./vanilla/inspect-comment.js",
+    "./react": "./react/DevInspector.tsx"
+  },
+  "files": [
+    "vanilla/",
+    "react/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "demo": "npx --yes serve ."
+  }
+}
