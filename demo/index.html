@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>inspect-comment demo</title>
+
+<!--
+  This page is deliberately hostile, so it doubles as the manual test surface:
+
+  - Aggressive resets on div/button/span/textarea, to prove the shadow root
+    keeps host-page CSS out of the tool's own UI.
+  - Sections with no id and no data-component, so the component/selector
+    fallbacks are exercised rather than the happy path.
+  - Repeated sibling elements, to exercise :nth-of-type.
+  - Deep nesting, to exercise the "shortest unique selector" early exit.
+  - Enough height to scroll, to prove the highlight tracks its element.
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  div { border: 0 !important; font-size: 16px; color: #161512; }
+  button { all: unset !important; }
+  span { letter-spacing: 0 !important; }
+  textarea { background: #fff !important; color: #000 !important; }
+
+  body { font: 16px/1.6 Georgia, serif; background: #f6f5f1; color: #161512; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 64px 24px 200px; }
+  h1 { font-size: 40px; line-height: 1.1; margin-bottom: 8px; }
+  h2 { font-size: 24px; margin-bottom: 12px; }
+  .lede { color: #57534a; margin-bottom: 48px; }
+  section { padding: 48px 0; border-top: 1px solid #ddd9d0; }
+  .card { padding: 20px 24px; background: #fff; border-radius: 10px; margin-bottom: 12px; }
+  .cta { display: inline-block; padding: 14px 22px; border-radius: 999px;
+         background: #c23a12; color: #f6f5f1; font: 13px/1 system-ui, sans-serif;
+         letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
+  code { font: 13px/1.5 ui-monospace, Menlo, monospace; background: #ece9e2; padding: 2px 5px; border-radius: 4px; }
+  ul { padding-left: 20px; margin: 12px 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>inspect-comment</h1>
+    <p class="lede">
+      Hit <code>Alt</code>+<code>C</code>, click anything, type a note, press
+      <code>Ctrl</code>+<code>Enter</code> to queue it. Repeat, then Copy all.
+    </p>
+
+    <!-- Has an id: the selector should collapse to "#pricing > ..." -->
+    <section id="pricing">
+      <h2>Section with an id</h2>
+      <div><div><div><div>
+        <p>Four divs deep with no ids or classes. The selector should still come
+        out as the shortest path that resolves uniquely, not a fixed six levels.</p>
+      </div></div></div></div>
+      <a class="cta" href="https://example.com">This link must not navigate</a>
+    </section>
+
+    <!-- No id, no data-component: Section should be omitted, not printed as a dash -->
+    <section>
+      <h2>Section with no id</h2>
+      <div class="card"><span>First card</span></div>
+      <div class="card"><span>Second card</span></div>
+      <div class="card"><span>Third card, reachable only via :nth-of-type</span></div>
+    </section>
+
+    <section>
+      <h2>Nested text</h2>
+      <p>
+        Selecting this paragraph should capture its own text, while selecting the
+        <span>span inside it</span> should capture only the span's text. Selecting
+        the whole <code>section</code> should not dump the entire page into the note.
+      </p>
+      <ul>
+        <li>Alt + arrows walk parent, child, and siblings</li>
+        <li>The breadcrumb in the panel jumps straight to an ancestor</li>
+        <li>The toggle button drags to a new corner</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Scroll target</h2>
+      <p>Select something up at the top of the page, then scroll down here. The
+      outline should stay locked to the element it was on, not stay frozen at the
+      coordinates where you clicked it.</p>
+    </section>
+
+    <div style="height: 120vh"></div>
+
+    <!-- Deliberately inaccessible, to exercise the a11y + contrast checks. -->
+    <section id="a11y">
+      <h2>Accessibility traps</h2>
+      <p style="color:#b8b3a8">Low-contrast body text that should fail WCAG AA.</p>
+      <!-- role="button" rather than <button>, since the reset above would win
+           over the inline colours and there would be nothing to fail. -->
+      <div role="button" tabindex="0" class="cta" style="background:#e8e4dc;color:#f6f5f1">Unreadable button</div>
+      <p><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24"></p>
+      <a href="#pricing" aria-label="Jump back to the pricing section">Labelled link</a>
+    </section>
+
+    <section>
+      <h2>Bottom of the page</h2>
+      <p>The toggle parks bottom-right by default, directly over where a real
+      landing page puts its primary call to action. Drag it somewhere else.</p>
+      <button class="cta">A button the reset above tried to destroy</button>
+    </section>
+  </div>
+
+  <script type="module">
+    import { mount } from "../src/inspect-comment.js";
+    window.demo = mount();
+  </script>
+</body>
+</html>

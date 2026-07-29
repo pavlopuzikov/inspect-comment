@@ -1,7 +1,7 @@
 {
   "name": "inspect-comment",
-  "version": "1.0.0",
-  "description": "Dev-only element inspector + comment tool: hover, click, comment, copy a precise element descriptor for design-review loops. Vanilla + React.",
+  "version": "2.0.0",
+  "description": "Dev-only element inspector + comment queue: hover, click, comment, copy one markdown review block naming each element precisely. Vanilla + React.",
   "keywords": [
     "devtools",
     "inspector",
@@ -12,18 +12,25 @@
   ],
   "license": "MIT",
   "type": "module",
-  "main": "vanilla/inspect-comment.js",
+  "main": "./src/inspect-comment.js",
+  "types": "./src/inspect-comment.d.ts",
   "exports": {
-    "./vanilla": "./vanilla/inspect-comment.js",
-    "./react": "./react/DevInspector.tsx"
+    ".": {
+      "types": "./src/inspect-comment.d.ts",
+      "default": "./src/inspect-comment.js"
+    },
+    "./react": "./src/DevInspector.tsx",
+    "./iife": "./dist/inspect-comment.js"
   },
   "files": [
-    "vanilla/",
-    "react/",
+    "src/",
+    "dist/",
+    "auto.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "demo": "npx --yes serve ."
+    "build": "node scripts/build.mjs",
+    "demo": "node scripts/build.mjs && npx --yes serve . -l 4321"
   }
 }
