@@ -15,9 +15,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 OUT="../media"
-QUALITY="-qm"          # 1280x720 source; the GIF is 960 wide, so 1080p buys nothing
-GIF_WIDTH=960
-GIF_FPS=16
+QUALITY="-qm"          # 1280x720 source; the GIF is 800 wide, so 1080p buys nothing
+
+# 800 and 12, not 960 and 16. GitHub renders a README at about 860px, so
+# anything past that is only ever downscaled by the browser, and these scenes
+# are mostly long holds on static frames where the extra frames cost bytes and
+# show nothing. Together the two took the-loop.gif from 3.3M to 2.0M.
+#
+# 128 colours is the floor, not a target. Dropping to 64 saves another 400K and
+# puts visible dither into the flat paper background, which is the exact banding
+# the two-pass palette below exists to prevent.
+GIF_WIDTH=800
+GIF_FPS=12
 
 # WHY --media_dir on the CLI and not just theme.configure(): manim parses its
 # own config AFTER importing the scene module, so anything the module sets for
