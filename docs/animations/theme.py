@@ -43,10 +43,26 @@ SELECT = "#c23a12"        # DEFAULTS.select: the selected outline
 WARN = "#d8a657"
 GOOD = "#4a7c59"
 
+# The mock page's own brand colour, and it is 3.1:1 against its #f6f5f1 label
+# ON PURPOSE. The panel in the animation reports "A11y 3.1:1 FAILS AA" about
+# this button, so the number has to be true of the pixels: measure the fill and
+# the label before changing either. It was SELECT until the audit, which was
+# wrong twice over. SELECT is 4.93:1, so the one accessibility finding the video
+# makes was false, and the mock page was painted in the tool's own selection
+# colour, which left no way to tell the page being reviewed from the thing
+# reviewing it.
+BRAND = "#d17334"
+
 # Text laid over a scrimmed page. PANEL_DIM is tuned against the panel's own
 # near-black; on a 60-odd percent wash over paper the ground is far lighter than
-# that and PANEL_DIM all but disappears into it.
-SCRIM_TEXT = "#cfc9bc"
+# that and PANEL_DIM all but disappears into it (1.67:1, measured).
+#
+# This value is set against the LIGHTEST scrim in use, because a wash over paper
+# gets lighter as opacity falls and the text has to survive the worst case: at
+# 0.62 it is 4.86:1, at 0.66 it is better. #cfc9bc, the first attempt, was still
+# only 3.48:1 and read as washed out on the payoff frame. Lower the scrim
+# opacity anywhere and this needs re-measuring.
+SCRIM_TEXT = "#efece5"
 
 # ------------------------------------------------------------------- strokes
 

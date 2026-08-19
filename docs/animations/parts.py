@@ -15,7 +15,7 @@ from manim import (
 from theme import (
     P, px, PXU, DESIGN_W, DESIGN_H, MONO, BODY, DISPLAY,
     CANVAS, INK, INK_DIM, INK_MUTE, LINE,
-    PANEL, PANEL_TEXT, PANEL_DIM, PANEL_LINE, ACCENT, SELECT, WARN,
+    PANEL, PANEL_TEXT, PANEL_DIM, PANEL_LINE, ACCENT, SELECT, WARN, BRAND,
     HAIR, BOX, OUTLINE,
 )
 
@@ -156,7 +156,10 @@ class MockPage:
 
         # the CTA: note 1 lands here
         self.cta_bounds = (90, 312, 196, 44)
-        cta = box(196, 44, fill=SELECT, r=22)
+        # BRAND, not SELECT. The panel reports this button as 3.1:1 FAILS AA,
+        # so the fill has to actually measure that against the label, and it has
+        # to differ from the colour the tool paints its own selection in.
+        cta = box(196, 44, fill=BRAND, r=22)
         place(cta, 90, 312)
         cta_t = t("READ THE CHAPTER", 11, "#f6f5f1")
         place(cta_t, 112, 328)
@@ -170,7 +173,10 @@ class MockPage:
         self.cards_bounds = (74, 356, 1132, 220)
         cards = VGroup()
         titles = ("01 / The Long Table", "02 / Nine Objects", "03 / What Remains")
-        bodies = ("Where the studio ate", "The working index", "A closing inventory")
+        # The third body is short on purpose: the panel is a fixed bottom-right
+        # overlay, as it is in the tool, and it lands across this card. Covering
+        # a card is honest, slicing a word in half looks like a render bug.
+        bodies = ("Where the studio ate", "The working index", "A closing list")
         metas = ("12 min", "9 objects", "Closing")
         self.card_bounds = []
         for i, (ti, bo, me) in enumerate(zip(titles, bodies, metas)):
@@ -470,7 +476,7 @@ def comment_text(p, s, size=11):
     return m
 
 
-def scrim(opacity=0.55, color="#0f0e0d"):
+def scrim(opacity=0.62, color="#0f0e0d"):
     """A full-frame wash, for the beats where the page is context and the thing
     on top of it is the subject."""
     return Rectangle(

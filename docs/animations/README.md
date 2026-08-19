@@ -93,6 +93,14 @@ The palette is the tool's own: `ACCENT` and `SELECT` in `theme.py` are the
 defaults from `src/inspect-comment.js`, so an animation of the tool is drawn in
 the colours the tool actually paints.
 
+`BRAND` is the exception and is the mock page's colour, not the tool's. It is
+also the one value here with a correctness constraint rather than a taste one:
+the panel reports the CTA as `3.1:1 FAILS AA`, so `BRAND` against its `#f6f5f1`
+label has to measure 3.1:1. It does, to two decimals. Change either and the one
+accessibility claim the animations make stops being true of the pixels they are
+made of. The same applies to `SCRIM_TEXT`, which is set against the lightest
+scrim in use: drop a `scrim()` opacity and re-measure it.
+
 The typefaces are system families, deliberately. `manim.register_font()` works
 and the brand faces render correctly through it, but it is catastrophically slow
 on Windows: measured at roughly 4.5s per unique string, against 0.06s for a
