@@ -14,3 +14,9 @@ Thumbs.db
 
 # NOTE: dist/ is deliberately NOT ignored. The committed IIFE build is what
 # makes the console-paste path work with no install step. See scripts/build.mjs.
+
+# Animation source is committed; its render scratch is not. render.sh writes
+# manim's intermediates to a temp dir, but running `manim` by hand in
+# docs/animations/ drops a local media/ next to the scripts.
+__pycache__/
+docs/animations/media/

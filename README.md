@@ -9,6 +9,8 @@ click an element, type what should change, queue it. Walk the whole page, then
 copy one markdown block that names every element precisely enough for a designer
 or an AI coding agent to act on without guessing.
 
+![Hover an element, click it, comment, queue it, copy the review](https://raw.githubusercontent.com/pavlopuzikov/inspect-comment/main/docs/media/the-loop.gif)
+
 ```markdown
 # Review: /chapters/golden-era
 Viewport 1440x900 @2x · 2 items
@@ -60,6 +62,16 @@ The space is crowded. What is actually different here:
   broken", and the evidence is in a console the reviewer never opens.
 - **No install required.** It is one dependency-free file. Paste it into a console
   on a site you do not control, drop a script tag, or import the React wrapper.
+
+### What one click captures
+
+![Every field a single click fills in](https://raw.githubusercontent.com/pavlopuzikov/inspect-comment/main/docs/media/one-click.gif)
+
+### Why Server Components are the hard part
+
+![Walking the client fiber finds nothing; _debugInfo names the server component](https://raw.githubusercontent.com/pavlopuzikov/inspect-comment/main/docs/media/server-components.gif)
+
+Source for all three is in [docs/animations](docs/animations), rendered with Manim.
 
 ## Install
 
