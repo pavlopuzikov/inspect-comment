@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # dist/ is a committed build artifact, so the one thing CI has to enforce
+      # is that it was regenerated. check.mjs rebuilds from src/ in memory and
+      # compares, then verifies the hand-written .d.ts against the real exports.
+      - run: npm run check
+
+      # Belt and braces: prove the build is reproducible on a clean checkout and
+      # leaves the tree untouched. Catches line-ending drift that would make
+      # every contributor's diff noisy.
+      - run: npm run build
+      - name: dist/ is up to date
+        run: git diff --exit-code -- dist/

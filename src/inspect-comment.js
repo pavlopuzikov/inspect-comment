@@ -1,5 +1,5 @@
 /*!
- * inspect-comment 2.0 — dev-only element inspector + comment queue.
+ * inspect-comment 2.0, dev-only element inspector + comment queue.
  *
  * Hover to highlight, click to select, type a comment, queue it, keep going.
  * "Copy all" emits one markdown review block naming each element precisely
@@ -436,8 +436,15 @@ function sectionEl(el) {
   return found && found !== el ? found : null;
 }
 
+// WHY the `!== el` guard: closest() matches the element itself, so selecting a
+// <section id="pricing"> used to print `Section: #pricing` directly under
+// `Element: <section>#pricing`. sectionEl() above already guards this; the two
+// have to agree or the note disagrees with the highlight drawn on the page.
 function sectionContext(el) {
-  const ctxEl = el.closest(
+  let ctxEl = el.closest(
+    "section[id], [data-component], main[id], article[id], [aria-labelledby], header, footer, nav"
+  );
+  if (ctxEl === el) ctxEl = el.parentElement && el.parentElement.closest(
     "section[id], [data-component], main[id], article[id], [aria-labelledby], header, footer, nav"
   );
   if (!ctxEl) return null;
@@ -582,6 +589,10 @@ function startCapture() {
     window.removeEventListener("error", onError, true);
     window.removeEventListener("unhandledrejection", onRejection, true);
     if (typeof originalFetch === "function") window.fetch = originalFetch;
+    // WHY: `logs` is module state, so without this a remount inherits the
+    // previous session's errors and the note claims they were raised during a
+    // review that had not started yet. React Fast Refresh remounts constantly.
+    logs.length = 0;
     logRestore = null;
   };
 }

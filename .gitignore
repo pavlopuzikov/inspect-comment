@@ -1,3 +1,16 @@
 node_modules/
-.DS_Store
 *.log
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Tooling output that has no business here
+.playwright-mcp/
+.env
+.env.*
+
+# NOTE: dist/ is deliberately NOT ignored. The committed IIFE build is what
+# makes the console-paste path work with no install step. See scripts/build.mjs.

@@ -1,16 +1,29 @@
 {
   "name": "inspect-comment",
   "version": "2.0.0",
-  "description": "Dev-only element inspector + comment queue: hover, click, comment, copy one markdown review block naming each element precisely. Vanilla + React.",
+  "description": "Dev-only element inspector + comment queue: hover, click, comment, copy one markdown review block naming each element precisely. Reads React Server Components, computes WCAG contrast, and records live CSS edits as before/after pairs.",
   "keywords": [
     "devtools",
     "inspector",
     "design-review",
     "annotate",
     "feedback",
-    "element-picker"
+    "element-picker",
+    "accessibility",
+    "wcag",
+    "contrast",
+    "react",
+    "nextjs",
+    "ai-agent"
   ],
   "license": "MIT",
+  "author": "Pavlo Puzikov (https://github.com/pavlopuzikov)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pavlopuzikov/inspect-comment.git"
+  },
+  "homepage": "https://github.com/pavlopuzikov/inspect-comment#readme",
+  "bugs": "https://github.com/pavlopuzikov/inspect-comment/issues",
   "type": "module",
   "main": "./src/inspect-comment.js",
   "types": "./src/inspect-comment.d.ts",
@@ -20,8 +33,14 @@
       "default": "./src/inspect-comment.js"
     },
     "./react": "./src/DevInspector.tsx",
-    "./iife": "./dist/inspect-comment.js"
+    "./auto": "./auto.js",
+    "./iife": "./dist/inspect-comment.js",
+    "./package.json": "./package.json"
   },
+  "sideEffects": [
+    "./auto.js",
+    "./dist/inspect-comment.js"
+  ],
   "files": [
     "src/",
     "dist/",
@@ -29,8 +48,12 @@
     "README.md",
     "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
     "demo": "node scripts/build.mjs && npx --yes serve . -l 4321"
   }
 }

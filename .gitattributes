@@ -1,0 +1,10 @@
+# dist/inspect-comment.js is a generated artifact that is committed to the repo,
+# so `npm run build` must be byte-reproducible across machines. Without this,
+# a Windows checkout (core.autocrlf=true) rewrites the source to CRLF, the build
+# emits a mix of CRLF body and LF wrapper, and every contributor sees the
+# artifact as modified without having changed anything.
+* text=auto eol=lf
+
+# Generated. Collapse it in diffs and exclude it from language stats; the review
+# happens in src/.
+dist/inspect-comment.js linguist-generated=true -diff

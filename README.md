@@ -1,5 +1,9 @@
 # inspect-comment
 
+[![CI](https://github.com/pavlopuzikov/inspect-comment/actions/workflows/ci.yml/badge.svg)](https://github.com/pavlopuzikov/inspect-comment/actions/workflows/ci.yml)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![no dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](package.json)
+
 A dev-only element **inspector + comment queue** for web projects. Hit the hotkey,
 click an element, type what should change, queue it. Walk the whole page, then
 copy one markdown block that names every element precisely enough for a designer
@@ -114,13 +118,13 @@ with no imports, so it also survives a strict CSP that blocks `import()`.
 Where dynamic import is allowed, this one-liner is easier:
 
 ```js
-import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-comment@master/src/inspect-comment.js').then(m => m.mount())
+import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-comment@v2.0.0/src/inspect-comment.js').then(m => m.mount())
 ```
 
 The same wrapped as a bookmarklet (make a new bookmark, paste as the URL):
 
 ```text
-javascript:(()=>{import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-comment@master/src/inspect-comment.js').then(m=>m.mount())})()
+javascript:(()=>{import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-comment@v2.0.0/src/inspect-comment.js').then(m=>m.mount())})()
 ```
 
 ## Keyboard
@@ -155,28 +159,28 @@ markdown. `api.resetStyles()` reverts them at any time, and so does `destroy()`.
 
 ## What it captures
 
-**Component** — nearest components, outermost first. React including **Server
+**Component**: nearest components, outermost first. React including **Server
 Components** (via `fiber._debugInfo`, which is where App Router names actually
 live), Vue 3, Vue 2, and Angular. Falls back to `data-component`, then omits itself.
-**Source** — `File.tsx:12` where the toolchain exposes it. Svelte always does;
+**Source**: `File.tsx:12` where the toolchain exposes it. Svelte always does;
 React 19 dropped `_debugSource`, so treat it as a bonus there.
-**Element** — tag, id, and any classes that are not framework utilities. Tailwind
+**Element**: tag, id, and any classes that are not framework utilities. Tailwind
 variants (`sm:`, `hover:`), arbitrary values (`min-h-[calc(…)]`) and the utility
 vocabulary are filtered out; if nothing meaningful survives, the class list is dropped.
-**Section** — nearest `section[id]`, `[data-component]`, `main[id]`, or landmark.
-**Text** — the element's own text nodes in preference to everything nested beneath
+**Section**: nearest `section[id]`, `[data-component]`, `main[id]`, or landmark.
+**Text**: the element's own text nodes in preference to everything nested beneath
 it, so selecting a section does not paste the whole page.
-**Selector** — the *shortest* path that resolves to exactly one element, verified
+**Selector**: the *shortest* path that resolves to exactly one element, verified
 with `querySelectorAll` and flagged `(not unique)` when it cannot be made so. An
 XPath is added only in that case, as a fallback.
-**Markup** — the opening tag, truncated.
-**Box** — dimensions, padding, margin, gap, type, colours, radius. Only values
+**Markup**: the opening tag, truncated.
+**Box**: dimensions, padding, margin, gap, type, colours, radius. Only values
 that are actually set.
-**A11y** — role (explicit or implicit), accessible name (`aria-label`,
+**A11y**: role (explicit or implicit), accessible name (`aria-label`,
 `aria-labelledby`, `title`), missing `alt`, `tabindex`, `disabled`, and the WCAG
 contrast ratio against the nearest painted background, flagged when it fails AA
 at that text size.
-**Console** — errors, warnings, unhandled rejections and failed requests raised
+**Console**: errors, warnings, unhandled rejections and failed requests raised
 while you were reviewing, appended once at the end of the block.
 
 ## Letting an agent read it without a copy-paste
@@ -234,17 +238,38 @@ logic can be used without any UI.
   what you get previewing a dev server from a phone over the LAN IP.
 - The toggle button drags to a new corner, and remembers where you put it.
 
+## Scope, and what not to do with it
+
+This is a development tool. It reads the page aggressively and is not built to
+be defensive about what it finds, so keep it out of production:
+
+- The captured `Markup` line is the element's opening tag, attributes included.
+  Inspecting a populated form field puts that field's `value` into the note.
+- `capture: true` records `console.error`, `console.warn` and failed responses.
+  Applications routinely log tokens and user records to the console, and those
+  end up in the markdown you are about to paste somewhere. Read a review block
+  before sending it on, or run with `capture: false`.
+- `expose: true` mirrors the queue into the DOM, where any script on the page
+  can read it. Pass `expose: false` on a page running third-party scripts.
+- The queue lives in `sessionStorage` under `inspect-comment:queue`, in the
+  clear, until you copy or clear it.
+
+None of this matters on your own dev server, which is the intended use. All of
+it matters on a production site or a client's staging environment.
+
 ## Development
 
 ```bash
 npm run demo    # builds dist/, serves http://localhost:4321/demo/
 npm run build   # regenerate dist/inspect-comment.js from src/
+npm run check   # dist/ is in sync, .d.ts matches the real exports, still dep-free
 ```
 
 `demo/index.html` is deliberately hostile: aggressive CSS resets, sections with
 no ids, repeated siblings, deep nesting, contrast failures, a missing `alt`, and
 enough height to scroll. Use it to check a change before trusting it on a real project.
 
-Edit `src/` only. `dist/` is generated and committed.
+Edit `src/` only. `dist/` is generated and committed, and CI fails if the two
+have drifted, so run `npm run build` in the same commit as any change to `src/`.
 
 MIT licensed. Use it in every project.
