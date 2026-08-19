@@ -13,8 +13,11 @@
 //   4. The bookmarklet in docs/ still points at the version being shipped.
 //   5. The MCP server neither imports a package nor writes to stdout, which are
 //      the two ways a stdio server fails with no diagnosable symptom.
+//   6. The README still describes the code. It is the only user-facing doc, so
+//      when it drifts there is nothing else to correct it.
 
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -28,6 +31,7 @@ const ok = (msg) => console.log(`  ok   ${msg}`);
 const src = await read("src", "inspect-comment.js");
 const dts = await read("src", "inspect-comment.d.ts");
 const mcp = await read("mcp", "server.mjs");
+const readme = await read("README.md");
 const pkg = JSON.parse(await read("package.json"));
 
 /* 1. dist/ matches a fresh build ------------------------------------------ */
@@ -122,6 +126,47 @@ if (!pkg.files.includes("mcp/")) {
 } else {
   ok("mcp/ is published");
 }
+
+/* 6. the README still matches the code ------------------------------------- */
+
+// WHY this is worth a check: the documented mount() call had every option after
+// the first laid out in columns, which put four of the eight inside a trailing
+// // comment. It parsed, it read correctly, and copy-pasting it silently gave
+// you half the options. Prose drift is survivable; a broken example is not.
+const defaults = src.slice(src.indexOf("const DEFAULTS"), src.indexOf("// Live-editable"));
+const optionKeys = [...defaults.matchAll(/^ {2}(\w+):/gm)].map((m) => m[1]);
+const example = readme.slice(readme.indexOf("const api = mount({"), readme.indexOf("api.markdown()"));
+
+if (!example) {
+  fail("README no longer contains a `const api = mount({ ... })` example.");
+} else {
+  try {
+    const literal = example.slice(example.indexOf("{"), example.lastIndexOf("}") + 1);
+    const evaluated = Object.keys(new Function(`return (${literal})`)());
+    const lost = optionKeys.filter((k) => !evaluated.includes(k));
+    if (lost.length) fail(`README mount() example evaluates without: ${lost.join(", ")}`);
+    else ok(`README documents all ${optionKeys.length} options and the example evaluates`);
+  } catch (err) {
+    fail(`README mount() example does not parse: ${err.message}`);
+  }
+}
+
+// Every api.x named in the README has to exist on the object createInspector
+// returns, or the first thing a reader tries throws.
+const returned = src.slice(src.lastIndexOf("  return {"));
+const phantom = [...readme.matchAll(/^api\.(\w+)/gm)]
+  .map((m) => m[1])
+  .filter((name) => !new RegExp(`(get )?${name}\\b`).test(returned));
+if (phantom.length) fail(`README documents api members that do not exist: ${phantom.join(", ")}`);
+else ok("every api.* in the README exists");
+
+const dead = [...readme.matchAll(/\]\((?!https?:|#)([^)]+)\)/g)]
+  .map((m) => m[1].split("#")[0])
+  .filter((target) => !existsSync(join(root, target)));
+if (dead.length) fail(`README has dead relative links: ${dead.join(", ")}`);
+else ok("README relative links resolve");
+
+if (readme.includes("\u2014")) fail("em dash in README");
 
 /* ------------------------------------------------------------------------- */
 
