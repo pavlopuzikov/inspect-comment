@@ -214,7 +214,7 @@ class LinkedIn(Scene):
         c.move_to(P(640, 600))
         self.play(FadeIn(c), run_time=0.3)
 
-        scenes.move_cursor(self, c, 206, 300)
+        scenes.move_cursor(self, c, 249, 340)
         sec = section_outline(page.hero_bounds, "#golden-era")
         hover = outline(page.cta_bounds, ACCENT, "<a>.cta")
         self.play(FadeIn(sec), FadeIn(hover), run_time=0.4)

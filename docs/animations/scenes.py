@@ -108,7 +108,7 @@ class TheLoop(Scene):
         self.play(FadeIn(c), run_time=0.3)
 
         # ---- note 1: the CTA -------------------------------------------------
-        move_cursor(self, c, 200, 300)
+        move_cursor(self, c, 249, 340)
         sec = section_outline(page.hero_bounds, "#golden-era")
         hover = outline(page.cta_bounds, ACCENT, "<a>.cta")
         self.play(FadeIn(sec), FadeIn(hover), run_time=0.4)
