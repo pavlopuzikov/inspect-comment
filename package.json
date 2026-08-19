@@ -54,6 +54,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
+    "test": "node --test",
     "demo": "node scripts/build.mjs && npx --yes serve . -l 4321"
   }
 }

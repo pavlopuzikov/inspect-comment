@@ -64,6 +64,8 @@ export interface ElementDescriptor {
   box: string;
   /** Role, accessible name, and WCAG contrast ratio with a pass/fail flag. */
   a11y: string | null;
+  /** True when `a11y` reports a contrast failure or a missing alt. */
+  a11yWarn: boolean;
 }
 
 export interface QueueEntry {
@@ -102,6 +104,28 @@ export function describe(el: Element): ElementDescriptor;
 
 /** Render queue entries as the review markdown block. */
 export function toMarkdown(entries: QueueEntry[]): string;
+
+/** An sRGB colour with a straight (non-premultiplied) alpha. */
+export interface Rgba {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+/**
+ * The contrast maths, exported because it is independently useful and because
+ * it is the part most worth testing. Composite with `blend` before measuring:
+ * `contrastRatio` assumes both colours are opaque, and translucent text is the
+ * case that gets contrast reporting wrong.
+ */
+export function blend(fg: Rgba, bg: Rgba): Rgba;
+
+/** WCAG 2.x contrast ratio between two opaque colours, unrounded. */
+export function contrastRatio(fg: Rgba, bg: Rgba): number;
+
+/** The AA threshold for a size and weight: 3 for large text, otherwise 4.5. */
+export function wcagRequirement(sizePx: number, weight: string | number): number;
 
 declare global {
   interface Window {

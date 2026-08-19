@@ -280,49 +280,129 @@ function luminance({ r, g, b }) {
   return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
 }
 
-// The nearest ancestor that actually paints something, since a transparent
-// background means the text sits on whatever is behind it.
+const WHITE = { r: 255, g: 255, b: 255, a: 1 };
+
+/** Flatten a translucent colour onto an opaque backdrop. */
+export function blend(fg, bg) {
+  if (fg.a >= 1) return { r: fg.r, g: fg.g, b: fg.b, a: 1 };
+  const a = fg.a;
+  return {
+    r: fg.r * a + bg.r * (1 - a),
+    g: fg.g * a + bg.g * (1 - a),
+    b: fg.b * a + bg.b * (1 - a),
+    a: 1,
+  };
+}
+
+/** WCAG 2.x contrast between two opaque colours. Blend before calling. */
+export function contrastRatio(fg, bg) {
+  const [l1, l2] = [luminance(fg), luminance(bg)];
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+/** The AA threshold for a given size and weight: 3 for large text, else 4.5. */
+export function wcagRequirement(sizePx, weight) {
+  const bold = parseInt(weight, 10) >= 700;
+  const large = sizePx >= 24 || (sizePx >= 18.66 && bold);
+  return large ? 3 : 4.5;
+}
+
+// WHY the whole ancestor chain and not the first layer that paints anything: a
+// background is a stack, not a single colour. `rgba(0,0,0,0.5)` over a red
+// section is a dark red, and returning it as though it were black reports a
+// contrast the reader never experiences. Compositing from the bottom up is the
+// only way to get the colour the text actually sits on.
 function effectiveBackground(el) {
-  for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
-    const c = parseRgb(getComputedStyle(node).backgroundColor);
-    if (c && c.a > 0) return c;
+  const layers = [];
+  let image = false;
+  for (let node = el; node; node = node.parentElement) {
+    const cs = getComputedStyle(node);
+    if (cs.backgroundImage && cs.backgroundImage !== "none") image = true;
+    const c = parseRgb(cs.backgroundColor);
+    if (c && c.a > 0) {
+      layers.push(c);
+      if (c.a >= 1) break; // opaque: nothing below it can show through
+    }
   }
-  return { r: 255, g: 255, b: 255, a: 1 };
+  let base = WHITE;
+  for (let i = layers.length - 1; i >= 0; i--) base = blend(layers[i], base);
+  return { color: base, image };
+}
+
+// `opacity` applies to an element as a composited group, so it fades text and
+// its own background together and the resulting contrast is not something you
+// can read off either colour. Rather than model it and produce a second wrong
+// number, say so.
+function hasTranslucentAncestor(el) {
+  for (let node = el; node; node = node.parentElement) {
+    const v = parseFloat(getComputedStyle(node).opacity);
+    if (!Number.isNaN(v) && v < 1) return true;
+  }
+  return false;
 }
 
 // WHY: none of the comparable tools compute this, and "is this text actually
 // readable" is one of the few design-review questions with a right answer.
+//
+// WHY the alpha is composited rather than dropped, which is what this used to
+// do: `rgba(0, 0, 0, 0.38)`, the Material disabled-text default, reads as pure
+// black if you take the channels and ignore the alpha. That scores 21:1 and
+// passes AA comfortably. Flattened onto white it is 2.7:1, which fails. Getting
+// this backwards on translucent text is getting it backwards on most secondary
+// text on the web.
 function contrastOf(el, cs) {
-  const fg = parseRgb(cs.color);
-  if (!fg) return null;
-  const bg = effectiveBackground(el);
-  const [l1, l2] = [luminance(fg), luminance(bg)];
-  const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-  const size = parseFloat(cs.fontSize);
-  const bold = parseInt(cs.fontWeight, 10) >= 700;
-  const large = size >= 24 || (size >= 18.66 && bold);
-  const required = large ? 3 : 4.5;
-  return { ratio: Math.round(ratio * 10) / 10, required, pass: ratio + 0.05 >= required };
+  const raw = parseRgb(cs.color);
+  if (!raw) return null;
+  const { color: bg, image } = effectiveBackground(el);
+  const fg = blend(raw, bg);
+  const ratio = contrastRatio(fg, bg);
+  const required = wcagRequirement(parseFloat(cs.fontSize), cs.fontWeight);
+
+  const approx = [];
+  if (image) approx.push("over an image");
+  if (hasTranslucentAncestor(el)) approx.push("under opacity");
+
+  return {
+    ratio: Math.round(ratio * 100) / 100,
+    required,
+    pass: ratio >= required,
+    approx: approx.length ? approx.join(", ") : null,
+  };
 }
 
 function a11ySummary(el, cs, hasText) {
   const bits = [];
+  let warn = false;
+
   const role = el.getAttribute("role") || IMPLICIT_ROLE[el.tagName.toLowerCase()];
   if (role) bits.push("role " + role);
 
   const name = accessibleName(el);
   if (name) bits.push(`name "${name.slice(0, 60)}"`);
 
-  if (el.tagName === "IMG" && el.getAttribute("alt") === null) bits.push("MISSING alt");
+  if (el.tagName === "IMG" && el.getAttribute("alt") === null) {
+    bits.push("MISSING alt");
+    warn = true;
+  }
   if (el.hasAttribute("disabled")) bits.push("disabled");
   const ti = el.getAttribute("tabindex");
   if (ti) bits.push("tabindex " + ti);
 
   if (hasText) {
     const c = contrastOf(el, cs);
-    if (c) bits.push(`contrast ${c.ratio}:1${c.pass ? "" : ` FAILS AA (needs ${c.required})`}`);
+    if (c) {
+      let s = `contrast ${c.ratio}:1`;
+      if (!c.pass) {
+        s += ` FAILS AA (needs ${c.required})`;
+        warn = true;
+      }
+      // Say when the number is an estimate instead of quietly presenting a
+      // guess with the same confidence as a measurement.
+      if (c.approx) s += ` (approx, ${c.approx})`;
+      bits.push(s);
+    }
   }
-  return bits.length ? bits.join(" · ") : null;
+  return bits.length ? { text: bits.join(" · "), warn } : null;
 }
 
 /* ---- extra locators -------------------------------------------------- */
@@ -607,6 +687,7 @@ function describe(el) {
   const cls = semanticClasses(el);
   const cs = getComputedStyle(el);
   const text = ownText(el);
+  const a11y = a11ySummary(el, cs, !!text);
   return {
     page: location.pathname + location.search + location.hash,
     component: componentPath(el) || vueComponentPath(el) || angularComponent(el),
@@ -620,7 +701,8 @@ function describe(el) {
     xpath: unique ? null : xPath(el),
     markup: markup(el),
     box: computedBox(el),
-    a11y: a11ySummary(el, cs, !!text),
+    a11y: a11y ? a11y.text : null,
+    a11yWarn: !!(a11y && a11y.warn),
   };
 }
 
@@ -781,7 +863,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   padding: 4px 6px; border-radius: 5px; background: #24221f; color: #b4ada0; box-shadow: none;
 }
 .crumb[data-current] { background: var(--select); color: #f6f5f1; }
-.desc { white-space: pre-wrap; color: #b4ada0; font-size: 11px; margin-bottom: 10px; max-height: 132px; overflow: auto; }
+.desc { color: #b4ada0; font-size: 11px; margin-bottom: 10px; max-height: 190px; overflow: auto; }
+.d-row { display: grid; grid-template-columns: 62px 1fr; gap: 8px; padding: 1px 0; }
+.d-k { color: #6f6a61; }
+.d-v { word-break: break-word; }
 .warn { color: #d8a657; }
 
 textarea {
@@ -825,7 +910,14 @@ textarea:focus { border-color: var(--accent); }
   position: fixed; z-index: 2147483003; background: #161512; color: #f6f5f1;
   font: 12px/1.2 inherit; padding: 10px 12px; border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  display: flex; align-items: center; gap: 10px;
 }
+.toast-undo {
+  font: 10px/1 inherit; letter-spacing: 0.08em; text-transform: uppercase;
+  background: transparent; color: #918a7c; border: 1px solid #33322f;
+  border-radius: 6px; padding: 5px 8px; box-shadow: none;
+}
+.toast-undo:hover { color: #f6f5f1; border-color: #6f6a61; }
 `;
 
 /* ------------------------------------------------------------------ *
@@ -858,6 +950,10 @@ export function createInspector(options = {}) {
     // element -> its original inline style attribute, so every live CSS edit
     // is reversible and the page can be handed back exactly as it was.
     originalStyle: new Map(),
+    // The target's style attribute as it stood when the current panel opened,
+    // so cancelling reverts exactly this panel's edits and leaves any edit
+    // already committed to a queued note alone.
+    panelEdit: null,
   };
 
   /* ---- storage ---- */
@@ -995,9 +1091,28 @@ export function createInspector(options = {}) {
     return out;
   }
 
+  // WHY: closing the panel without adding a note used to leave every live CSS
+  // edit applied to the page, with nothing anywhere recording it. Esc means
+  // "never mind", so it has to put the element back.
+  function revertPanelEdit() {
+    const edit = state.panelEdit;
+    state.panelEdit = null;
+    if (!edit || !edit.node) return;
+    if (edit.style === null) edit.node.removeAttribute("style");
+    else edit.node.setAttribute("style", edit.style);
+    // If that put the node back to how the session found it, stop tracking it,
+    // so copyAll does not report "styles reset" for an element with no edits.
+    if (state.originalStyle.get(edit.node) === edit.style) {
+      state.originalStyle.delete(edit.node);
+    }
+  }
+
   // Called once the review is handed off, so the page goes back to the truth
   // rather than silently keeping a reviewer's experiment applied.
   function resetStyles() {
+    // Stronger than a panel revert and runs after it: drop the snapshot, or
+    // closePanel would re-apply the very edits this just undid.
+    state.panelEdit = null;
     for (const [node, style] of state.originalStyle) {
       if (style === null) node.removeAttribute("style");
       else node.setAttribute("style", style);
@@ -1302,6 +1417,10 @@ export function createInspector(options = {}) {
 
   function openPanel(initialComment = "") {
     destroyPanel();
+    // Walking to another element abandons whatever was typed into the CSS
+    // fields for the previous one, so treat it as a cancel for that element.
+    revertPanelEdit();
+    state.panelEdit = { node: state.target, style: state.target.getAttribute("style") };
     const d = describe(state.target);
     const cs = getComputedStyle(state.target);
 
@@ -1322,16 +1441,30 @@ export function createInspector(options = {}) {
     }
 
     const desc = el("div", "desc");
-    const lines = [];
-    if (d.component) lines.push("Component: " + d.component);
-    if (d.source) lines.push("Source: " + d.source);
-    lines.push("Element: " + d.element);
-    if (d.section) lines.push("Section: " + d.section);
-    if (d.text) lines.push('Text: "' + d.text + '"');
-    lines.push("Selector: " + d.selector + (d.selectorUnique ? "" : "  (not unique)"));
-    lines.push("Box: " + d.box);
-    if (d.a11y) lines.push("A11y: " + d.a11y);
-    desc.textContent = lines.join("\n");
+    const rows = [];
+    if (d.component) rows.push(["Component", d.component]);
+    if (d.source) rows.push(["Source", d.source]);
+    rows.push(["Element", d.element]);
+    if (d.section) rows.push(["Section", d.section]);
+    if (d.text) rows.push(["Text", JSON.stringify(d.text)]);
+    rows.push(["Selector", d.selector + (d.selectorUnique ? "" : "  (not unique)")]);
+    rows.push(["Box", d.box]);
+    if (d.a11y) rows.push(["A11y", d.a11y, d.a11yWarn]);
+
+    // WHY rows and not one pre-wrapped text node: the A11y line is the only
+    // line here that carries a verdict, and as a single text node it was
+    // painted the same muted grey as the box metrics. `.warn` sat in the
+    // stylesheet from the start with nothing ever applying it.
+    for (const [label, value, warn] of rows) {
+      const line = el("div", "d-row");
+      const k = el("span", "d-k");
+      k.textContent = label;
+      const v = el("span", "d-v");
+      v.textContent = value;
+      if (warn) v.classList.add("warn");
+      line.append(k, v);
+      desc.appendChild(line);
+    }
 
     textarea = document.createElement("textarea");
     textarea.rows = 3;
@@ -1440,6 +1573,7 @@ export function createInspector(options = {}) {
   }
 
   function closePanel({ keepQueue = true } = {}) {
+    revertPanelEdit();
     destroyPanel();
     state.selected = false;
     state.queueOpen = false;
@@ -1453,6 +1587,9 @@ export function createInspector(options = {}) {
   function add(descriptor, { silent = false, changes = [] } = {}) {
     const comment = textarea ? textarea.value.trim() : "";
     state.queue.push({ descriptor, comment, changes, el: state.target });
+    // Committed: the note records the before/after pair, so the edit stays on
+    // the page until the review is copied.
+    state.panelEdit = null;
     saveQueue();
     destroyPanel();
     state.selected = false;
@@ -1466,11 +1603,17 @@ export function createInspector(options = {}) {
   }
 
   function removeAt(i) {
-    state.queue.splice(i, 1);
+    const [removed] = state.queue.splice(i, 1);
     saveQueue();
     updateCount();
     if (state.queue.length) openQueue();
     else closePanel();
+    toast("Removed", () => {
+      state.queue.splice(Math.min(i, state.queue.length), 0, removed);
+      saveQueue();
+      updateCount();
+      openQueue();
+    });
   }
 
   function updateCount() {
@@ -1485,6 +1628,8 @@ export function createInspector(options = {}) {
   }
 
   function openQueue() {
+    // Leaving an element for the queue list without adding a note is a cancel.
+    revertPanelEdit();
     destroyPanel();
     state.selected = false;
     state.queueOpen = true;
@@ -1529,10 +1674,16 @@ export function createInspector(options = {}) {
     clear.type = "button";
     clear.textContent = "Clear";
     clear.addEventListener("click", () => {
+      const previous = state.queue;
       state.queue = [];
       saveQueue();
       closePanel();
-      toast("Queue cleared");
+      toast(`Cleared ${previous.length}`, () => {
+        state.queue = previous;
+        saveQueue();
+        updateCount();
+        openQueue();
+      });
     });
 
     row.append(copyBtn, clear);
@@ -1549,6 +1700,7 @@ export function createInspector(options = {}) {
     }
     const n = state.queue.length;
     const tweaked = state.originalStyle.size;
+    const previous = state.queue;
     const ok = await writeClipboard(toMarkdown(state.queue));
     if (ok) {
       state.queue = [];
@@ -1557,7 +1709,14 @@ export function createInspector(options = {}) {
       resetStyles();
       saveQueue();
       closePanel();
-      toast(`Copied ${n} note${n === 1 ? "" : "s"}${tweaked ? " · styles reset" : ""}`);
+      // The button says "Copy all" and then empties the queue, which is not
+      // what it sounds like. Undo restores the notes; the style edits stay
+      // reverted, since the markdown already carries them as before/after.
+      toast(`Copied ${n} note${n === 1 ? "" : "s"}${tweaked ? " · styles reset" : ""}`, () => {
+        state.queue = previous;
+        saveQueue();
+        updateCount();
+      });
     } else {
       toast("Copy failed (clipboard blocked)");
     }
@@ -1578,15 +1737,32 @@ export function createInspector(options = {}) {
     t.style.bottom = window.innerHeight - anchor.top + 10 + "px";
   }
 
-  function toast(msg) {
+  // WHY an action slot: deleting a queued note, clearing the queue and copying
+  // (which empties it) were all instant and unrecoverable. A review is twenty
+  // minutes of work and the only affordance for protecting it was care.
+  function toast(msg, undo) {
     const existing = ui.querySelector(".toast");
     if (existing) existing.remove();
     const t = el("div", "toast");
-    t.textContent = msg;
+    const label = el("span", "toast-msg");
+    label.textContent = msg;
+    t.appendChild(label);
+    if (undo) {
+      const b = el("button", "toast-undo");
+      b.type = "button";
+      b.textContent = "Undo";
+      b.addEventListener("click", () => {
+        t.remove();
+        clearTimeout(toastTimer);
+        undo();
+      });
+      t.appendChild(b);
+    }
     ui.appendChild(t);
     placeToast();
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.remove(), 2000);
+    // Two seconds is not long enough to notice a mistake and reach for Undo.
+    toastTimer = setTimeout(() => t.remove(), undo ? 6000 : 2000);
   }
 
   /* ---- lifecycle ---- */

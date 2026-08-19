@@ -18,6 +18,7 @@ jobs:
       # dist/ is a committed build artifact, so the one thing CI has to enforce
       # is that it was regenerated. check.mjs rebuilds from src/ in memory and
       # compares, then verifies the hand-written .d.ts against the real exports.
+      - run: npm test
       - run: npm run check
 
       # Belt and braces: prove the build is reproducible on a clean checkout and
