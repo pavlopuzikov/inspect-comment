@@ -7,12 +7,22 @@ by `docs/animations/render.sh LinkedIn`.
 | --- | --- |
 | File | `docs/media/linkedin.mp4` |
 | Format | 1920x1080, 16:9, h264 yuv420p, 30fps, no audio |
-| Length | about 43 seconds |
+| Length | 56.8 seconds |
 | Rebuild | `cd docs/animations && ./render.sh LinkedIn` |
 
 LinkedIn re-encodes on upload, so upload the mp4 directly rather than a GIF or a
 YouTube link. Native video is what gets played inline; a link gets a thumbnail.
-There is no audio track, so the post has to carry the argument on its own.
+There is no audio track, so the post has to carry the argument on its own, which
+is why the copy repeats the video's opening line rather than avoiding it.
+
+| Beat | In | Runs |
+| --- | --- | --- |
+| 1. What it is | 0:00 | 5.4s |
+| 2. The note that fails | 0:05 | 9.0s |
+| 3. The loop | 0:14 | 18.2s |
+| 4. What comes out | 0:32 | 8.9s |
+| 5. The handoff | 0:41 | 9.8s |
+| 6. Where to get it | 0:51 | 5.6s |
 
 ## Post
 

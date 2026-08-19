@@ -7,6 +7,14 @@ The LinkedIn cut: one 16:9 video that explains the tool end to end.
 Six beats, in the order a stranger needs them: what it is, why the usual design
 note fails, the loop, what comes out, who it can be handed to, where to get it.
 
+Every hold is set to how long the frame takes to READ, not to how long it takes
+to notice. A monospace line runs about 12 characters a second, and the frames
+here are dense: the copied review is thirteen lines of it and the descriptor
+panel is five labelled rows. It is the mistake this cut made first time out, and
+it is invisible while authoring, because by then you already know what every
+frame says. When adding a beat, count its characters rather than trusting it to
+feel right on the tenth viewing.
+
 The scenes in scenes.py are README GIFs and are read on mute, at whatever size a
 GitHub column happens to be. This is read in a feed, at full width, by someone
 who has never heard of the tool, so it carries a title card, a stated problem
@@ -148,7 +156,7 @@ class LinkedIn(Scene):
         self.play(FadeIn(tag_line), run_time=0.4)
         self.play(FadeIn(tag_two), run_time=0.4)
         self.play(FadeIn(row, shift=UP * px(6)), run_time=0.5)
-        self.wait(1.6)
+        self.wait(2.4)
         clear(self)
 
     # -- 2. why the usual note fails ----------------------------------------
@@ -168,7 +176,7 @@ class LinkedIn(Scene):
         msg = VGroup(shadow(bubble, spread=10, offset=8, opacity=0.10), bubble, quote)
         msg.move_to(P(640, 272))
         self.play(FadeIn(msg, shift=UP * px(10)), run_time=0.6)
-        self.wait(1.0)
+        self.wait(1.9)
 
         asks = ["which button?", "on which page?", "darker than what?", "by how much?"]
         row = VGroup()
@@ -179,14 +187,14 @@ class LinkedIn(Scene):
         row.arrange(RIGHT, buff=px(38))
         row.move_to(P(640, 412))
         for item in row:
-            self.play(FadeIn(item, shift=UP * px(5)), run_time=0.28)
-        self.wait(0.9)
+            self.play(FadeIn(item, shift=UP * px(5)), run_time=0.34)
+        self.wait(1.5)
 
         verdict = t("Four questions, two people, and the contrast still fails.",
                     17, INK_DIM, BODY)
         verdict.move_to(P(640, 508))
         self.play(FadeIn(verdict), run_time=0.5)
-        self.wait(1.5)
+        self.wait(2.4)
         clear(self)
 
     # -- 3. the loop --------------------------------------------------------
@@ -228,7 +236,9 @@ class LinkedIn(Scene):
         ], comment="")
         place(p, 1280 - 16 - 340, 720 - 16 - 34 - 10 - p.height * PXU)
         self.play(FadeIn(p, shift=UP * px(12)), run_time=0.5)
-        self.wait(1.1)
+        # Five labelled rows, and the whole argument of the tool is that you did
+        # not have to write any of them. That needs reading, not glancing at.
+        self.wait(2.4)
 
         self.play(FadeOut(cap), run_time=0.25)
         cap = scenes.caption("the only thing you type is the opinion")
@@ -236,7 +246,7 @@ class LinkedIn(Scene):
 
         note = comment_text(p, "these behave as links but read as buttons")
         self.play(AddTextLetterByLetter(note, run_time=1.8))
-        self.wait(0.6)
+        self.wait(1.3)
 
         b1 = badge(1, page.cta_bounds)
         d1 = dock(active=True, count=1)
@@ -269,7 +279,7 @@ class LinkedIn(Scene):
         self.play(FadeIn(p2, shift=UP * px(10)), run_time=0.35)
         note2 = comment_text(p2, "cards need more air between them")
         self.play(AddTextLetterByLetter(note2, run_time=1.2))
-        self.wait(0.3)
+        self.wait(1.0)
 
         b2 = badge(2, page.card_bounds[1])
         d2 = dock(active=True, count=2)
@@ -303,7 +313,10 @@ class LinkedIn(Scene):
                  14, SCRIM_TEXT, BODY)
         line.move_to(P(640, 628))
         self.play(FadeIn(line), run_time=0.4)
-        self.wait(3.2)
+        # The longest hold in the cut, and it should be. This is the artifact the
+        # whole thing exists to produce, it is thirteen lines of monospace, and a
+        # viewer who cannot finish it has been shown the payoff and denied it.
+        self.wait(7.0)
         clear(self, 0.6)
 
     # -- 5. who it can be handed to -----------------------------------------
@@ -347,7 +360,7 @@ class LinkedIn(Scene):
         wire.next_to(arrow, UP, buff=px(10))
         self.play(Create(arrow), FadeIn(wire), run_time=0.55)
         self.play(FadeIn(agent, shift=UP * px(8)), run_time=0.5)
-        self.wait(1.4)
+        self.wait(2.8)
 
         cmd = listing(
             [("claude mcp add inspect-comment -- npx -y inspect-comment-mcp", PANEL_TEXT)],
@@ -355,7 +368,7 @@ class LinkedIn(Scene):
         )
         cmd.move_to(P(640, 588))
         self.play(FadeIn(cmd, shift=UP * px(8)), run_time=0.5)
-        self.wait(2.2)
+        self.wait(3.4)
         clear(self, 0.55)
 
     # -- 6. where to get it -------------------------------------------------
@@ -374,4 +387,4 @@ class LinkedIn(Scene):
         self.play(FadeIn(url), run_time=0.4)
         self.play(FadeIn(row, shift=UP * px(6)), run_time=0.45)
         self.play(FadeIn(last), run_time=0.4)
-        self.wait(3.0)
+        self.wait(3.8)
