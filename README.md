@@ -60,8 +60,16 @@ The space is crowded. What is actually different here:
   and the note carries `font-size: 172.8px → 140px` instead of "a bit smaller".
 - **Console and network errors ride along.** Half of "this looks wrong" is "this is
   broken", and the evidence is in a console the reviewer never opens.
-- **No install required.** It is one dependency-free file. Paste it into a console
-  on a site you do not control, drop a script tag, or import the React wrapper.
+- **The agent receives it, rather than being handed it.** The bundled
+  [MCP server](mcp/README.md) delivers the review to Claude Code or Cursor
+  directly. `await_review` even blocks while you mark the page up. Comparable
+  tools produce a ticket for a human; this produces a brief for an agent.
+- **Focus order, drawn on the page.** Contrast and focus order are the two
+  accessibility failures invisible in a screenshot, and the two a pass over the
+  live DOM can actually settle. Both are answered here.
+- **No install required, and it means it.** One dependency-free file. A
+  bookmarklet on any site you can open, a console paste where a CSP blocks that,
+  a script tag, or the React wrapper.
 
 ### What one click captures
 
@@ -124,20 +132,13 @@ Safe in `<head>` without `defer`; the core waits for `document.body` itself.
 
 ### 3. Any site you do not control
 
-Paste `dist/inspect-comment.js` into the browser console. It is a plain script
-with no imports, so it also survives a strict CSP that blocks `import()`.
+A **bookmarklet**, so it is one drag and then one click on any page you can
+open. The URL and the caveats are in [docs/bookmarklet.md](docs/bookmarklet.md);
+click it once to mount, again to remove.
 
-Where dynamic import is allowed, this one-liner is easier:
-
-```js
-import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-comment@v2.0.0/src/inspect-comment.js').then(m => m.mount())
-```
-
-The same wrapped as a bookmarklet (make a new bookmark, paste as the URL):
-
-```text
-javascript:(()=>{import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-comment@v2.0.0/src/inspect-comment.js').then(m=>m.mount())})()
-```
+Where a strict CSP blocks the injected script, paste
+`dist/inspect-comment.js` into the browser console instead. It is a plain script
+with no imports, so no CSP can stop it: it is not a page resource.
 
 ## Keyboard
 
@@ -148,11 +149,60 @@ javascript:(()=>{import('https://cdn.jsdelivr.net/gh/pavlopuzikov/inspect-commen
 | `Ctrl`/`⌘` + `Enter` | Queue the note and go straight back to inspecting |
 | `Alt` + `↑` `↓` | Select the parent / first child of the current element |
 | `Alt` + `←` `→` | Select the previous / next sibling |
+| `Tab` / `Shift`+`Tab` | Walk the page's focus order (in inspect mode) |
+| `Enter` | Select the highlighted element (in inspect mode) |
+| `↑` `↓` `←` `→` | Walk the tree, no modifier needed (in inspect mode) |
+| `Alt` + `F` | Show the focus-order overlay |
 | `Esc` | Close the panel, then leave inspect mode |
 
 `elementFromPoint` returns the topmost node, so a click routinely lands on an
 inner `<span>` when you meant the `<button>`. That is what the arrows are for.
 The breadcrumb across the top of the panel does the same thing with the mouse.
+
+Inspect mode takes the keyboard, which is what makes the tool usable without a
+pointer at all: arm it, `Tab` to the control you mean, `Enter`, type, `Ctrl`+`Enter`.
+
+## Focus order
+
+`Alt`+`F` draws the page's tab order over it, numbered in the order the browser
+will actually visit each stop. A `!` marks a positive `tabindex`, and amber marks
+a stop whose keyboard position disagrees with where it sits on screen.
+
+The sequence is the real one from the HTML spec, not document order: a positive
+`tabindex` jumps the queue, ascending, and only then does everything at
+`tabindex="0"` follow. Selecting an element puts its position on the note:
+
+```
+- Focus: tab stop 1 of 8 · tabindex 3 OVERRIDES document order
+```
+
+Walking with `Tab` never calls `focus()` on the page's own elements, so nothing
+opens, scrolls or dismisses while you look at it.
+
+Two things this deliberately does not do. It does not flag every element after a
+displaced one: the overlay marks the *minimum* set you would have to move
+(the complement of the longest run already in agreement), because comparing
+positions directly turns one bad `tabindex` into a page-wide red alert. And it
+does not model the separate navigation scopes an open `<dialog>` or a shadow
+root create, so treat those as out of scope rather than as reported-correctly.
+
+## Screenshots
+
+Press **Shot** in the comment panel to attach a PNG of the element as the
+browser actually painted it. The first one asks for screen-capture permission;
+the rest of the session does not.
+
+It uses the Screen Capture API rather than a DOM-to-canvas rasteriser, so
+`backdrop-filter`, blend modes, transforms, `<canvas>` and WebGL all come out
+right, and it adds nothing to the bundle. html2canvas would have been 150-200 kB
+and would disagree with the browser on exactly the things a design review is
+about.
+
+Chrome puts "This tab" first in the picker. Other browsers show the normal
+picker; pick the tab.
+
+Images travel over the [MCP bridge](mcp/README.md), not the clipboard: the
+server writes each one to disk and the note cites the path.
 
 ## Live CSS editing
 
@@ -192,14 +242,37 @@ that are actually set.
 `aria-labelledby`, `title`), missing `alt`, `tabindex`, `disabled`, and the WCAG
 contrast ratio against the nearest painted background, flagged when it fails AA
 at that text size.
+**Focus**: position in the page's real tab order, a positive `tabindex` that
+overrides document order, a focusable control with no accessible name, or a
+click handler on something the keyboard cannot reach at all.
+**Screenshot**: a PNG of the element as painted, when you asked for one.
 **Console**: errors, warnings, unhandled rejections and failed requests raised
 while you were reviewing, appended once at the end of the block.
 
-## Letting an agent read it without a copy-paste
+## Handing the review to a coding agent
 
-The queue is mirrored into the page as JSON, so anything already driving the
-browser (Playwright, chrome-devtools-mcp, a Puppeteer script) can read the whole
-review in one call. No server, no port, nothing to keep running:
+Two ways, depending on whether the agent has a browser.
+
+### It does not: the MCP server
+
+Most of the time the agent is Claude Code or Cursor in a terminal. Point it at
+the bundled MCP server and pressing **Copy all** also delivers the review to it.
+
+```bash
+claude mcp add inspect-comment -- npx -y inspect-comment-mcp
+```
+
+Then `get_review` hands over your notes, and `await_review` blocks until you send
+them, so "go and mark up the page, I'll wait" works literally. Setup, tools and
+troubleshooting are in [mcp/README.md](mcp/README.md).
+
+It is a loopback port on your own machine. No account, no hosted service,
+nothing leaves the box, and the server has no dependencies either.
+
+### It does: read the queue out of the page
+
+Anything already driving the browser (Playwright, chrome-devtools-mcp, a
+Puppeteer script) can read the whole review in one call, with no server at all:
 
 ```js
 JSON.parse(document.getElementById('inspect-comment-queue').textContent)
@@ -219,11 +292,16 @@ const api = mount({
   storage: true,       // persist the queue to sessionStorage
   capture: true,       // capture console + network errors
   expose: true,        // mirror the queue into the page as JSON
+  bridge: 'http://127.0.0.1:7391',  // MCP server; false to disable
+  screenshots: true,   // offer the per-note Shot button
 });
 
 api.queue          // queued entries
 api.logs           // captured console/network errors
 api.markdown()     // what "Copy all" would put on the clipboard
+api.focusOrder()   // every tab stop, in the order the browser will visit them
+api.bridge         // the MCP server origin if one is answering, else null
+api.send()         // push the queue to the MCP server
 api.resetStyles()  // revert live CSS edits, keep the queue
 api.config({ accent: '#0a7' })
 api.destroy()      // full teardown: UI, listeners, console/fetch, edits, JSON tag

@@ -34,6 +34,13 @@ const DEFAULTS = {
   // Mirror the queue into a <script type="application/json"> in the page, so an
   // agent driving the browser can read the review without a copy-paste step.
   expose: true,
+  // Loopback address of the MCP server in mcp/server.mjs. When something is
+  // listening there, copying a review also posts it, so a coding agent can ask
+  // for the notes instead of the reviewer pasting them. Set false to disable.
+  bridge: "http://127.0.0.1:7391",
+  // Offer per-note screenshots. Nothing is captured until the reviewer presses
+  // Shot, which is also when the browser asks for screen-capture permission.
+  screenshots: true,
 };
 
 // Live-editable properties, in the order a designer reaches for them.
@@ -51,6 +58,14 @@ const TWEAKABLE = [
 ];
 
 const KEBAB = (prop) => prop.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+
+// Only used to label a shortcut. userAgentData is not on Safari or Firefox, so
+// the platform string stays as the fallback rather than the primary source.
+const IS_APPLE =
+  typeof navigator !== "undefined" &&
+  /mac|iphone|ipad/i.test(
+    (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ""
+  );
 
 /* ------------------------------------------------------------------ *
  * Element description
@@ -405,6 +420,157 @@ function a11ySummary(el, cs, hasText) {
   return bits.length ? { text: bits.join(" · "), warn } : null;
 }
 
+/* ---- focus order ----------------------------------------------------- *
+ *
+ * WHY this is here and not left to a linter: contrast and focus order are the
+ * two accessibility failures you cannot see by looking at a screenshot, and
+ * they are the two an automated pass over the DOM can actually settle. A
+ * linter reads the source and sees `tabindex={2}`; it cannot see that the
+ * element ended up third from the bottom of the page after the layout ran.
+ * ------------------------------------------------------------------ */
+
+const FOCUSABLE = [
+  "a[href]",
+  "area[href]",
+  "button",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  "iframe",
+  "audio[controls]",
+  "video[controls]",
+  "[tabindex]",
+  '[contenteditable=""]',
+  '[contenteditable="true"]',
+].join(",");
+
+function isVisible(el) {
+  const cs = getComputedStyle(el);
+  if (cs.visibility === "hidden" || cs.display === "none" || cs.contentVisibility === "hidden") return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 0 || r.height > 0;
+}
+
+/**
+ * Every tab stop on the page, in the order the browser will visit them.
+ *
+ * The sort is the sequential focus navigation order from the HTML spec, which
+ * is not document order: a positive tabindex jumps the queue, ascending, and
+ * only then does everything at tabindex 0 follow in document order. Getting
+ * this wrong would make the tool confidently report the wrong sequence, which
+ * is worse than not reporting one, so it is implemented rather than assumed.
+ *
+ * Scoping caveats not handled: an open <dialog> or a shadow root creates its
+ * own sequential navigation scope, and `inert` prunes a subtree. Those are
+ * called out in the summary rather than silently mis-numbered.
+ */
+function tabStops(reject) {
+  const found = [];
+  let i = 0;
+  for (const el of document.querySelectorAll(FOCUSABLE)) {
+    if (reject && reject(el)) continue;
+    if (el.hasAttribute("disabled") || el.closest("[inert]")) continue;
+    if (el.tabIndex < 0) continue;
+    if (el.tagName === "INPUT" && el.type === "hidden") continue;
+    if (!isVisible(el)) continue;
+    found.push({ el, tabindex: el.tabIndex, order: i++ });
+  }
+  found.sort((a, b) => {
+    const pa = a.tabindex > 0 ? 0 : 1;
+    const pb = b.tabindex > 0 ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    if (pa === 0 && a.tabindex !== b.tabindex) return a.tabindex - b.tabindex;
+    return a.order - b.order;
+  });
+  return found;
+}
+
+/**
+ * Tab stops whose keyboard position disagrees with where they sit on screen.
+ *
+ * Reading order is approximated by banding the page into rows: two controls
+ * whose vertical centres are within a line of each other count as the same row
+ * and are then ordered left to right. Without the band, a toolbar whose buttons
+ * differ by one subpixel would report as one row per button.
+ *
+ * WHY the longest increasing subsequence and not a positional comparison:
+ * comparing each stop's tab index against its visual index flags everything
+ * downstream of a single displaced element. On a page whose only fault is one
+ * `tabindex="3"` near the bottom, that is every control above it, which reads
+ * as "this page is entirely broken" and buries the one thing that is. The LIS
+ * is the largest set of stops already in agreement, so what falls outside it is
+ * the minimum set you would actually have to move.
+ */
+function outOfOrder(stops) {
+  const ROW = 24; // px; roughly one line, so a toolbar reads as one row
+  const boxed = stops.map((stop, i) => {
+    const r = stop.el.getBoundingClientRect();
+    return { i, top: r.top + window.scrollY, left: r.left + window.scrollX };
+  });
+
+  // rank[tabIndex] = where that stop falls in reading order.
+  const rank = new Array(stops.length);
+  boxed
+    .slice()
+    .sort((a, b) => (Math.abs(a.top - b.top) > ROW ? a.top - b.top : a.left - b.left))
+    .forEach((entry, visualIndex) => {
+      rank[entry.i] = visualIndex;
+    });
+
+  // Patience sorting: tails[k] is the smallest possible tail of an increasing
+  // run of length k+1, and prev threads the winners back into a real sequence.
+  const tails = [];
+  const tailIndex = [];
+  const prev = new Array(stops.length).fill(-1);
+  for (let i = 0; i < rank.length; i++) {
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < rank[i]) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = rank[i];
+    tailIndex[lo] = i;
+    prev[i] = lo > 0 ? tailIndex[lo - 1] : -1;
+  }
+
+  const keep = new Set();
+  for (let i = tailIndex.length ? tailIndex[tailIndex.length - 1] : -1; i !== -1; i = prev[i]) {
+    keep.add(i);
+  }
+
+  const flagged = new Set();
+  for (let i = 0; i < stops.length; i++) if (!keep.has(i)) flagged.add(i);
+  return flagged;
+}
+
+/** One line about this element's place in the keyboard path, or null. */
+function focusSummary(el, stops) {
+  const idx = stops.findIndex((s) => s.el === el);
+  if (idx === -1) {
+    // Not a tab stop. Worth saying only when it looks like it should be one.
+    const clickable = el.hasAttribute("onclick") || el.getAttribute("role") === "button";
+    if (clickable && el.tabIndex < 0) {
+      return { text: "NOT reachable by keyboard (click handler, no tab stop)", warn: true };
+    }
+    return null;
+  }
+  const bits = [`tab stop ${idx + 1} of ${stops.length}`];
+  let warn = false;
+  const ti = stops[idx].tabindex;
+  if (ti > 0) {
+    bits.push(`tabindex ${ti} OVERRIDES document order`);
+    warn = true;
+  }
+  if (!accessibleName(el) && !ownText(el)) {
+    bits.push("NO accessible name");
+    warn = true;
+  }
+  return { text: bits.join(" · "), warn };
+}
+
 /* ---- extra locators -------------------------------------------------- */
 
 function xPath(el) {
@@ -630,6 +796,12 @@ function formatArg(a) {
   return String(a);
 }
 
+// Set by the instance so the fetch wrapper can tell the reviewer's own failed
+// requests apart from the tool posting a review to its loopback server. Without
+// this, running with no MCP server listening writes "failed http://127.0.0.1"
+// into the very review it was trying to send.
+let bridgeOrigin = null;
+
 function startCapture() {
   if (logRestore) return;
   const originals = {};
@@ -653,6 +825,9 @@ function startCapture() {
   if (typeof originalFetch === "function") {
     window.fetch = async function (...args) {
       const url = typeof args[0] === "string" ? args[0] : args[0] && args[0].url;
+      if (bridgeOrigin && typeof url === "string" && url.startsWith(bridgeOrigin)) {
+        return originalFetch.apply(this, args);
+      }
       try {
         const res = await originalFetch.apply(this, args);
         if (!res.ok) pushLog("network", `${res.status} ${url}`);
@@ -677,6 +852,13 @@ function startCapture() {
   };
 }
 
+// The inspector's own shadow host must never appear in a page's tab order
+// report. This is module scope rather than the instance's isOurs() because
+// describe() and tabStops() are both reachable without an instance.
+function isInspectorNode(el) {
+  return !!(el && el.closest && el.closest(`[${HOST_ATTR}]`));
+}
+
 function shortLabel(el) {
   const cls = semanticClasses(el, 1);
   return `<${el.tagName.toLowerCase()}>${el.id ? "#" + el.id : ""}${cls.length ? "." + cls[0] : ""}`;
@@ -688,6 +870,9 @@ function describe(el) {
   const cs = getComputedStyle(el);
   const text = ownText(el);
   const a11y = a11ySummary(el, cs, !!text);
+  // One document query per panel open, not per hover: describe() runs on
+  // selection, and the answer is only meaningful against the whole page.
+  const focus = focusSummary(el, tabStops(isInspectorNode));
   return {
     page: location.pathname + location.search + location.hash,
     component: componentPath(el) || vueComponentPath(el) || angularComponent(el),
@@ -703,7 +888,175 @@ function describe(el) {
     box: computedBox(el),
     a11y: a11y ? a11y.text : null,
     a11yWarn: !!(a11y && a11y.warn),
+    focus: focus ? focus.text : null,
+    focusWarn: !!(focus && focus.warn),
+    shot: null,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Element screenshots
+ *
+ * DECISION: the Screen Capture API, not a DOM-to-canvas rasteriser.
+ *
+ * html2canvas and friends re-implement CSS in JavaScript, which means they
+ * quietly disagree with the browser on exactly the things a design review is
+ * about: backdrop-filter, blend modes, subpixel text, transforms, and anything
+ * drawn into a <canvas> or a WebGL context. They are also 150-200 kB, which
+ * would be three times this entire tool. getDisplayMedia hands back the pixels
+ * the browser actually painted, and costs nothing but a permission prompt.
+ *
+ * The prompt is the tradeoff, and it is once per session, not once per shot.
+ * ------------------------------------------------------------------ */
+
+const SHOT_PAD = 8; // px of context around the element, so it reads as a crop
+
+let shotStream = null;
+let shotVideo = null;
+
+function shotSupported() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+}
+
+async function shotSource() {
+  if (shotStream && shotStream.active && shotVideo) return shotVideo;
+  stopShots();
+  shotStream = await navigator.mediaDevices.getDisplayMedia({
+    audio: false,
+    video: { displaySurface: "browser" },
+    // Chrome-only hints that put "This tab" first in the picker. Other engines
+    // ignore unknown members here, so this degrades to a normal picker rather
+    // than throwing.
+    preferCurrentTab: true,
+    selfBrowserSurface: "include",
+    surfaceSwitching: "exclude",
+  });
+  // A stream the user stops from the browser's sharing bar has to be forgotten,
+  // or the next shot silently captures a dead track and writes a black PNG.
+  for (const track of shotStream.getVideoTracks()) {
+    track.addEventListener("ended", stopShots);
+  }
+  shotVideo = document.createElement("video");
+  shotVideo.srcObject = shotStream;
+  shotVideo.muted = true;
+  shotVideo.playsInline = true;
+  await shotVideo.play();
+  return shotVideo;
+}
+
+function stopShots() {
+  if (shotStream) for (const t of shotStream.getTracks()) t.stop();
+  if (shotVideo) shotVideo.srcObject = null;
+  shotStream = null;
+  shotVideo = null;
+}
+
+const nextFrame = () =>
+  new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+/**
+ * A PNG data URL of `el` as the browser actually painted it.
+ *
+ * `hide` is called around the grab so the inspector's own overlay does not end
+ * up in the reviewer's screenshot of the thing the overlay is pointing at.
+ */
+async function captureElement(el, hide) {
+  if (!shotSupported()) throw new Error("screen capture is not available in this browser");
+
+  let rect = el.getBoundingClientRect();
+  // An element scrolled out of view captures as whatever happens to be on
+  // screen, which looks like a cropping bug rather than a scrolling one.
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    el.scrollIntoView({ block: "center", behavior: "instant" });
+    await nextFrame();
+    rect = el.getBoundingClientRect();
+  }
+
+  const video = await shotSource();
+  if (hide) hide(true);
+  try {
+    await nextFrame();
+
+    // The capture surface is the tab viewport, but not necessarily at CSS
+    // scale: it comes back at device pixels, and the display can be scaled
+    // again. Derive the factor rather than assuming devicePixelRatio, which is
+    // wrong on a zoomed page.
+    const sx = video.videoWidth / window.innerWidth;
+    const sy = video.videoHeight / window.innerHeight;
+
+    const clampX = (v) => Math.max(0, Math.min(v, window.innerWidth));
+    const clampY = (v) => Math.max(0, Math.min(v, window.innerHeight));
+    const left = clampX(rect.left - SHOT_PAD);
+    const top = clampY(rect.top - SHOT_PAD);
+    const right = clampX(rect.right + SHOT_PAD);
+    const bottom = clampY(rect.bottom + SHOT_PAD);
+    const w = Math.round((right - left) * sx);
+    const h = Math.round((bottom - top) * sy);
+    if (w < 1 || h < 1) throw new Error("element is not visible in the viewport");
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas
+      .getContext("2d")
+      .drawImage(video, Math.round(left * sx), Math.round(top * sy), w, h, 0, 0, w, h);
+
+    return {
+      dataUrl: canvas.toDataURL("image/png"),
+      width: w,
+      height: h,
+      // True when the element ran past an edge of the viewport, so the note can
+      // say the image is a crop rather than the whole thing.
+      clipped:
+        rect.left < 0 ||
+        rect.top < 0 ||
+        rect.right > window.innerWidth ||
+        rect.bottom > window.innerHeight,
+    };
+  } finally {
+    if (hide) hide(false);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * MCP bridge
+ *
+ * The other half of mcp/server.mjs. `expose` already lets an agent that is
+ * driving the browser read the queue; this covers the far more common case
+ * where the agent is Claude Code or Cursor in a terminal, with no browser of
+ * its own. Copying a review posts it to a loopback port, and the agent asks
+ * its MCP server for it.
+ * ------------------------------------------------------------------ */
+
+/** Is an inspect-comment MCP server listening? Resolves false, never throws. */
+async function probeBridge(origin) {
+  if (!origin || typeof fetch !== "function") return false;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 700);
+    const res = await fetch(origin + "/health", { signal: ctrl.signal, mode: "cors" });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    const body = await res.json();
+    return !!(body && body.name === "inspect-comment-mcp");
+  } catch {
+    // No server, wrong port, a firewall, or a page whose CSP forbids the
+    // connection. All of them mean the same thing here: no bridge.
+    return false;
+  }
+}
+
+async function postReview(origin, payload) {
+  try {
+    const res = await fetch(origin + "/review", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -722,6 +1075,15 @@ function entryToMarkdown(entry, index) {
   if (d.markup) lines.push(`- Markup: \`${d.markup}\``);
   lines.push(`- Box: ${d.box}`);
   if (d.a11y) lines.push(`- A11y: ${d.a11y}`);
+  if (d.focus) lines.push(`- Focus: ${d.focus}`);
+  // The bytes travel over the MCP bridge, not in the markdown: a base64 PNG
+  // inlined here would be tens of thousands of tokens in an agent's context
+  // for an image it may not need. The server writes the file and names it.
+  if (d.shot) {
+    lines.push(
+      `- Screenshot: ${d.shot.width}x${d.shot.height} png${d.shot.clipped ? ", clipped at the viewport edge" : ""}`
+    );
+  }
 
   // The exact values the reviewer dialled in, so the agent implements a number
   // rather than interpreting "a bit smaller".
@@ -839,6 +1201,23 @@ const CSS_TEXT = `
   font: 10px/1 inherit; padding: 3px 5px; border-radius: 0 0 4px 0;
 }
 
+/* Focus-order overlay: every tab stop on the page, numbered in the order the
+   browser will visit them. Amber marks a stop whose keyboard position
+   disagrees with where it sits on screen. */
+.fo {
+  position: fixed; pointer-events: none; z-index: 2147482997;
+  outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.fo-n {
+  position: absolute; top: -9px; left: -9px; min-width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #f6f5f1; border-radius: 999px;
+  font: 10px/1 inherit; padding: 0 5px;
+}
+.fo[data-flag] { outline-color: #d8a657; }
+.fo[data-flag] .fo-n { background: #d8a657; color: #161512; }
+.fo[data-current] { outline: 2px solid var(--select); }
+
 .dock { position: fixed; z-index: 2147483001; display: flex; gap: 6px; align-items: flex-end; }
 
 button {
@@ -850,6 +1229,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .toggle[data-active] { background: var(--accent); }
 .toggle { touch-action: none; }
 .count { background: var(--select); padding: 9px 10px; }
+.focus-btn { background: #24221f; padding: 9px 10px; }
+.focus-btn[data-active] { background: #d8a657; color: #161512; }
 
 .panel {
   position: fixed; z-index: 2147483002; width: 340px; max-width: calc(100vw - 32px);
@@ -868,6 +1249,17 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .d-k { color: #6f6a61; }
 .d-v { word-break: break-word; }
 .warn { color: #d8a657; }
+
+/* Per-note screenshot, shown at a size that proves the crop without taking
+   over the panel. */
+.shot { margin-bottom: 10px; display: none; }
+.shot[data-has] { display: block; }
+.shot img {
+  display: block; width: 100%; max-height: 120px; object-fit: contain;
+  object-position: left top; background: #0f0e0d;
+  border: 1px solid #33322f; border-radius: 6px;
+}
+.shot-meta { font-size: 10px; color: #6f6a61; margin-top: 4px; }
 
 textarea {
   width: 100%; resize: vertical; background: #0f0e0d; color: #f6f5f1;
@@ -954,7 +1346,17 @@ export function createInspector(options = {}) {
     // so cancelling reverts exactly this panel's edits and leaves any edit
     // already committed to a queued note alone.
     panelEdit: null,
+    // Focus-order overlay: every tab stop on the page, plus the indices whose
+    // keyboard position disagrees with their position on screen.
+    focusMode: false,
+    focusStops: [],
+    focusFlags: new Set(),
+    // Is an inspect-comment MCP server answering on opts.bridge?
+    bridgeUp: false,
   };
+
+  // Module-level, because the fetch wrapper that skips it is module-level too.
+  bridgeOrigin = opts.bridge || null;
 
   /* ---- storage ---- */
 
@@ -987,8 +1389,20 @@ export function createInspector(options = {}) {
   }
 
   // `el` is a live DOM node: strip it, JSON cannot represent it.
-  function plainQueue() {
-    return state.queue.map(({ descriptor, comment, changes }) => ({ descriptor, comment, changes }));
+  //
+  // `shots` decides whether the base64 PNGs ride along. Only the MCP bridge
+  // wants them: sessionStorage would blow its ~5 MB quota on three notes and
+  // lose the whole queue, and an agent reading the exposed <script> tag would
+  // spend tens of thousands of tokens on an image it did not ask for.
+  function plainQueue({ shots = false } = {}) {
+    return state.queue.map(({ descriptor, comment, changes }) => ({
+      descriptor:
+        shots || !descriptor.shot
+          ? descriptor
+          : { ...descriptor, shot: { ...descriptor.shot, dataUrl: null } },
+      comment,
+      changes,
+    }));
   }
 
   function saveQueue() {
@@ -1060,9 +1474,18 @@ export function createInspector(options = {}) {
   const countBtn = el("button", "count");
   countBtn.type = "button";
   countBtn.style.display = "none";
-  dock.append(toggle, countBtn);
+  const focusBtn = el("button", "focus-btn");
+  focusBtn.type = "button";
+  focusBtn.textContent = "Tab";
+  focusBtn.title = "Show focus order (Alt+F)";
+  focusBtn.setAttribute("aria-label", "Show focus order");
+  focusBtn.setAttribute("aria-pressed", "false");
+  dock.append(toggle, focusBtn, countBtn);
 
-  ui.append(markers, sectionBox, highlight, dock);
+  // One box per tab stop, positioned in the same rAF tick as everything else.
+  const focusLayer = el("div", "focus-layer");
+
+  ui.append(markers, focusLayer, sectionBox, highlight, dock);
 
   let panel = null;
   let textarea = null;
@@ -1197,6 +1620,8 @@ export function createInspector(options = {}) {
     else openQueue();
   });
 
+  focusBtn.addEventListener("click", () => setFocusMode(!state.focusMode));
+
   /* ---- highlight ---- */
 
   // WHY: the rect used to be captured once at click time, so the outline drifted
@@ -1216,6 +1641,7 @@ export function createInspector(options = {}) {
   function tick() {
     state.raf = 0;
     drawMarkers();
+    drawFocusOrder();
 
     if (state.target && !state.target.isConnected) clearTarget();
 
@@ -1267,9 +1693,83 @@ export function createInspector(options = {}) {
   }
 
   function schedule() {
-    if (!state.raf && (state.active || state.selected || state.queue.length)) {
+    if (
+      !state.raf &&
+      (state.active || state.selected || state.queue.length || state.focusMode)
+    ) {
       state.raf = requestAnimationFrame(tick);
     }
+  }
+
+  /* ---- focus order ---- */
+
+  // A page with 400 links would cost more to draw every frame than the overlay
+  // is worth, and 400 numbered badges are unreadable anyway. The cap is said
+  // out loud in the dock rather than silently truncating.
+  const FOCUS_LIMIT = 150;
+
+  function computeFocusOrder() {
+    state.focusStops = tabStops(isOurs).slice(0, FOCUS_LIMIT);
+    state.focusFlags = outOfOrder(state.focusStops);
+  }
+
+  function setFocusMode(on) {
+    state.focusMode = on;
+    if (on) computeFocusOrder();
+    else state.focusStops = [];
+    if (on) focusBtn.setAttribute("data-active", "");
+    else focusBtn.removeAttribute("data-active");
+    focusBtn.setAttribute("aria-pressed", String(on));
+    drawFocusOrder();
+    schedule();
+    if (on) {
+      const bad = state.focusFlags.size;
+      toast(
+        `${state.focusStops.length} tab stop${state.focusStops.length === 1 ? "" : "s"}` +
+          (bad ? ` · ${bad} out of visual order` : "")
+      );
+    }
+  }
+
+  function drawFocusOrder() {
+    const stops = state.focusMode ? state.focusStops : [];
+    while (focusLayer.children.length > stops.length) focusLayer.lastChild.remove();
+    while (focusLayer.children.length < stops.length) {
+      const box = el("div", "fo");
+      box.appendChild(el("span", "fo-n"));
+      focusLayer.appendChild(box);
+    }
+    stops.forEach((stop, i) => {
+      const box = focusLayer.children[i];
+      place(box, stop.el.getBoundingClientRect());
+      box.firstChild.textContent = stop.tabindex > 0 ? `${i + 1}!` : String(i + 1);
+      if (state.focusFlags.has(i)) box.setAttribute("data-flag", "");
+      else box.removeAttribute("data-flag");
+      if (stop.el === state.target) box.setAttribute("data-current", "");
+      else box.removeAttribute("data-current");
+    });
+  }
+
+  /**
+   * Move the highlight along the page's tab order.
+   *
+   * WHY this and not just focusing the element: calling focus() would fire the
+   * page's own focus handlers, open menus, scroll containers and dismiss
+   * things, so reviewing the focus order would change the thing being
+   * reviewed. Walking the computed order leaves the page untouched.
+   */
+  function stepFocus(delta) {
+    if (!state.focusStops.length) computeFocusOrder();
+    const stops = state.focusStops;
+    if (!stops.length) return false;
+    const at = stops.findIndex((stop) => stop.el === state.target);
+    const next =
+      at === -1
+        ? stops[delta > 0 ? 0 : stops.length - 1]
+        : stops[(at + delta + stops.length) % stops.length];
+    setTarget(next.el);
+    next.el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    return true;
   }
 
   function setTarget(node) {
@@ -1367,17 +1867,52 @@ export function createInspector(options = {}) {
       return;
     }
 
+    // Alt+F draws the page's tab order over it. Independent of inspect mode,
+    // because "show me the focus order" is a question you ask about a page you
+    // are otherwise using normally.
+    if (e.altKey && e.code === "KeyF") {
+      e.preventDefault();
+      setFocusMode(!state.focusMode);
+      return;
+    }
+
+    // WHY inspect mode owns the keyboard: the page is not being used while the
+    // crosshair is up (clicks are already swallowed), so Tab can mean "next tab
+    // stop in the review" rather than "move focus". This is what makes the tool
+    // usable without a pointer, and it is also the only way to inspect the
+    // focus order without the act of inspecting it moving focus around.
+    if (state.active && !state.selected && !state.queueOpen) {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (!state.focusMode) setFocusMode(true);
+        stepFocus(e.shiftKey ? -1 : 1);
+        return;
+      }
+      if (e.key === "Enter" && state.target) {
+        e.preventDefault();
+        select(state.target);
+        return;
+      }
+      // Bare arrows walk the tree here. Alt is only needed once the panel is
+      // open, where the arrows otherwise belong to the textarea's caret.
+      if (!e.altKey && e.key.startsWith("Arrow")) {
+        const from = state.target || document.body.firstElementChild;
+        const next = walkFrom(from, e.key);
+        if (next) {
+          e.preventDefault();
+          setTarget(next);
+          next.scrollIntoView({ block: "nearest", inline: "nearest" });
+          return;
+        }
+      }
+    }
+
     // WHY: elementFromPoint returns the topmost node, which is routinely an
     // inner <span> when the <button> was meant. Alt+arrows walk the tree.
     // Alt is required so the arrows still move the caret inside the textarea.
     if (e.altKey && state.target && (state.selected || state.active)) {
-      const t = state.target;
-      let next = null;
-      if (e.key === "ArrowUp") next = t.parentElement;
-      else if (e.key === "ArrowDown") next = t.firstElementChild;
-      else if (e.key === "ArrowLeft") next = t.previousElementSibling;
-      else if (e.key === "ArrowRight") next = t.nextElementSibling;
-      if (next && !isOurs(next) && next !== document.documentElement) {
+      const next = walkFrom(state.target, e.key);
+      if (next) {
         e.preventDefault();
         if (state.selected) select(next, { keepComment: true });
         else setTarget(next);
@@ -1389,6 +1924,18 @@ export function createInspector(options = {}) {
       if (state.selected || state.queueOpen) closePanel();
       else if (state.active) setActive(false);
     }
+  }
+
+  /** One step through the DOM tree, or null if that direction is a dead end. */
+  function walkFrom(node, key) {
+    if (!node) return null;
+    let next = null;
+    if (key === "ArrowUp") next = node.parentElement;
+    else if (key === "ArrowDown") next = node.firstElementChild;
+    else if (key === "ArrowLeft") next = node.previousElementSibling;
+    else if (key === "ArrowRight") next = node.nextElementSibling;
+    if (!next || isOurs(next) || next === document.documentElement) return null;
+    return next;
   }
 
   /* ---- selection + panel ---- */
@@ -1450,6 +1997,7 @@ export function createInspector(options = {}) {
     rows.push(["Selector", d.selector + (d.selectorUnique ? "" : "  (not unique)")]);
     rows.push(["Box", d.box]);
     if (d.a11y) rows.push(["A11y", d.a11y, d.a11yWarn]);
+    if (d.focus) rows.push(["Focus", d.focus, d.focusWarn]);
 
     // WHY rows and not one pre-wrapped text node: the A11y line is the only
     // line here that carries a verdict, and as a single text node it was
@@ -1465,6 +2013,14 @@ export function createInspector(options = {}) {
       line.append(k, v);
       desc.appendChild(line);
     }
+
+    // Screenshot slot. Empty until the reviewer presses Shot, and shown at a
+    // size that proves the crop is right without taking over the panel.
+    const shotWrap = el("div", "shot");
+    const shotImg = document.createElement("img");
+    shotImg.alt = "";
+    const shotMeta = el("div", "shot-meta");
+    shotWrap.append(shotImg, shotMeta);
 
     textarea = document.createElement("textarea");
     textarea.rows = 3;
@@ -1513,7 +2069,7 @@ export function createInspector(options = {}) {
     const addBtn = el("button", "primary");
     addBtn.type = "button";
     // The dock chip already carries the count; repeating it here just wraps.
-    addBtn.textContent = "Add ⌘⏎";
+    addBtn.textContent = IS_APPLE ? "Add ⌘⏎" : "Add Ctrl+⏎";
     addBtn.addEventListener("click", submit);
 
     const tweakBtn = el("button", "tweak-toggle");
@@ -1530,6 +2086,47 @@ export function createInspector(options = {}) {
       tweakBtn.setAttribute("aria-expanded", String(state.tweakOpen));
     });
 
+    const shotBtn = el("button", "ghost");
+    shotBtn.type = "button";
+    shotBtn.textContent = "Shot";
+    shotBtn.title = "Screenshot this element";
+    if (!opts.screenshots || !shotSupported()) shotBtn.style.display = "none";
+    shotBtn.addEventListener("click", async () => {
+      const node = state.target;
+      if (!node) return;
+      // The picker is modal and the reviewer may never answer it, so the panel
+      // can be gone by the time this resolves. Everything below then has to
+      // stay off the DOM: touching a destroyed panel throws inside an async
+      // handler, which surfaces as an unhandled rejection and nothing else.
+      const mine = panel;
+      const live = () => panel === mine && panel !== null;
+      shotBtn.disabled = true;
+      shotBtn.textContent = "...";
+      try {
+        // Hiding the whole shadow host is what keeps the tool's own outline,
+        // label and panel out of the reviewer's screenshot of the element the
+        // outline is pointing at.
+        const shot = await captureElement(node, (hidden) => {
+          host.style.visibility = hidden ? "hidden" : "";
+        });
+        d.shot = shot;
+        if (!live()) return;
+        shotImg.src = shot.dataUrl;
+        shotMeta.textContent =
+          `${shot.width}x${shot.height}` + (shot.clipped ? " · clipped at the viewport edge" : "");
+        shotWrap.setAttribute("data-has", "");
+        positionPanel();
+      } catch (err) {
+        // A denied permission prompt lands here too, and reads correctly.
+        if (live()) toast(`No screenshot: ${err.message}`);
+      } finally {
+        if (live()) {
+          shotBtn.disabled = false;
+          shotBtn.textContent = d.shot ? "Reshoot" : "Shot";
+        }
+      }
+    });
+
     const copyBtn = el("button", "ghost");
     copyBtn.type = "button";
     copyBtn.textContent = "Copy";
@@ -1543,12 +2140,12 @@ export function createInspector(options = {}) {
     cancel.textContent = "Esc";
     cancel.addEventListener("click", () => closePanel());
 
-    row.append(addBtn, tweakBtn, copyBtn, cancel);
+    row.append(addBtn, tweakBtn, shotBtn, copyBtn, cancel);
 
     const hint = el("div", "hint");
-    hint.textContent = "Alt+click select · Alt+↑↓←→ walk · Alt+C toggle";
+    hint.textContent = "Alt+↑↓←→ walk · Tab focus order · Alt+F overlay · Alt+C toggle";
 
-    panel.append(head, crumbs, desc, textarea, tweaks, row, hint);
+    panel.append(head, crumbs, desc, shotWrap, textarea, tweaks, row, hint);
     ui.appendChild(panel);
     textarea.focus();
     placeToast();
@@ -1557,6 +2154,7 @@ export function createInspector(options = {}) {
 
   // Keep the panel clear of the dock rather than stacking on top of it.
   function positionPanel() {
+    if (!panel) return;
     const r = dock.getBoundingClientRect();
     const below = r.top < window.innerHeight / 2;
     panel.style.right = Math.max(16, window.innerWidth - r.right) + "px";
@@ -1693,6 +2291,25 @@ export function createInspector(options = {}) {
     updateCount();
   }
 
+  /** POST the review to the MCP server, if one is listening. */
+  async function sendToBridge(markdown) {
+    if (!opts.bridge) return false;
+    // Re-probe when the last answer was no: starting the server after opening
+    // the page is the normal order of events, and a stale no would mean the
+    // bridge never worked until a reload.
+    if (!state.bridgeUp) state.bridgeUp = await probeBridge(opts.bridge);
+    if (!state.bridgeUp) return false;
+    const sent = await postReview(opts.bridge, {
+      page: location.href,
+      viewport: `${window.innerWidth}x${window.innerHeight}@${window.devicePixelRatio}x`,
+      markdown,
+      queue: plainQueue({ shots: true }),
+      logs: logs.slice(),
+    });
+    if (!sent) state.bridgeUp = false;
+    return sent;
+  }
+
   async function copyAll() {
     if (!state.queue.length) {
       toast("Nothing queued");
@@ -1701,22 +2318,31 @@ export function createInspector(options = {}) {
     const n = state.queue.length;
     const tweaked = state.originalStyle.size;
     const previous = state.queue;
-    const ok = await writeClipboard(toMarkdown(state.queue));
-    if (ok) {
+    const markdown = toMarkdown(state.queue);
+
+    // Both paths, concurrently. A blocked clipboard on a non-secure origin is
+    // no longer a dead end when the bridge is up, and vice versa.
+    const [ok, sent] = await Promise.all([writeClipboard(markdown), sendToBridge(markdown)]);
+
+    if (ok || sent) {
       state.queue = [];
       // The review is handed off, so put the page back the way it was; the
       // edits live on in the markdown as before/after pairs.
       resetStyles();
       saveQueue();
       closePanel();
+      const what = ok ? `Copied ${n} note${n === 1 ? "" : "s"}` : `Sent ${n} note${n === 1 ? "" : "s"}`;
       // The button says "Copy all" and then empties the queue, which is not
       // what it sounds like. Undo restores the notes; the style edits stay
       // reverted, since the markdown already carries them as before/after.
-      toast(`Copied ${n} note${n === 1 ? "" : "s"}${tweaked ? " · styles reset" : ""}`, () => {
-        state.queue = previous;
-        saveQueue();
-        updateCount();
-      });
+      toast(
+        what + (ok && sent ? " · sent to agent" : "") + (tweaked ? " · styles reset" : ""),
+        () => {
+          state.queue = previous;
+          saveQueue();
+          updateCount();
+        }
+      );
     } else {
       toast("Copy failed (clipboard blocked)");
     }
@@ -1775,6 +2401,13 @@ export function createInspector(options = {}) {
   window.addEventListener("resize", onResize);
 
   if (opts.capture) startCapture();
+  // Fire and forget: the answer only decides whether copying also posts, and a
+  // rejection here is the ordinary "no server running" case.
+  if (opts.bridge) {
+    probeBridge(opts.bridge).then((up) => {
+      state.bridgeUp = up;
+    });
+  }
   state.queue = loadQueue();
   setActive(false);
   updateCount();
@@ -1798,7 +2431,27 @@ export function createInspector(options = {}) {
     },
     /** Current queue, as plain serialisable objects (live nodes stripped). */
     get queue() {
-      return plainQueue();
+      return plainQueue({ shots: true });
+    },
+    /** Whether an inspect-comment MCP server is answering on opts.bridge. */
+    get bridge() {
+      return state.bridgeUp ? opts.bridge : null;
+    },
+    /** Every tab stop on the page, in the order the browser will visit them. */
+    focusOrder() {
+      const stops = tabStops(isOurs);
+      const flags = outOfOrder(stops);
+      return stops.map((stop, i) => ({
+        index: i + 1,
+        element: shortLabel(stop.el),
+        tabindex: stop.tabindex,
+        name: accessibleName(stop.el) || ownText(stop.el) || null,
+        outOfVisualOrder: flags.has(i),
+      }));
+    },
+    /** Push the current queue to the MCP server. Resolves false if none is up. */
+    send() {
+      return sendToBridge(toMarkdown(state.queue));
     },
     /** Captured console errors, warnings and failed requests. */
     get logs() {
@@ -1819,6 +2472,8 @@ export function createInspector(options = {}) {
       if (state.moveRaf) cancelAnimationFrame(state.moveRaf);
       clearTimeout(toastTimer);
       resetStyles();
+      stopShots();
+      bridgeOrigin = null;
       if (logRestore) logRestore();
       const exposed = document.getElementById(EXPOSE_ID);
       if (exposed) exposed.remove();

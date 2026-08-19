@@ -1,6 +1,6 @@
 {
   "name": "inspect-comment",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Dev-only element inspector + comment queue: hover, click, comment, copy one markdown review block naming each element precisely. Reads React Server Components, computes WCAG contrast, and records live CSS edits as before/after pairs.",
   "keywords": [
     "devtools",
@@ -14,7 +14,11 @@
     "contrast",
     "react",
     "nextjs",
-    "ai-agent"
+    "ai-agent",
+    "mcp",
+    "screenshot",
+    "focus-order",
+    "bookmarklet"
   ],
   "license": "MIT",
   "author": "Pavlo Puzikov (https://github.com/pavlopuzikov)",
@@ -35,7 +39,8 @@
     "./react": "./src/DevInspector.tsx",
     "./auto": "./auto.js",
     "./iife": "./dist/inspect-comment.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./mcp": "./mcp/server.mjs"
   },
   "sideEffects": [
     "./auto.js",
@@ -44,6 +49,7 @@
   "files": [
     "src/",
     "dist/",
+    "mcp/",
     "auto.js",
     "README.md",
     "LICENSE"
@@ -53,8 +59,13 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "bookmarklet": "node scripts/bookmarklet.mjs",
     "check": "node scripts/check.mjs",
     "test": "node --test",
+    "mcp": "node mcp/server.mjs",
     "demo": "node scripts/build.mjs && npx --yes serve . -l 4321"
+  },
+  "bin": {
+    "inspect-comment-mcp": "./mcp/server.mjs"
   }
 }

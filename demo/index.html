@@ -28,6 +28,7 @@
   h1 { font-size: 40px; line-height: 1.1; margin-bottom: 8px; }
   h2 { font-size: 24px; margin-bottom: 12px; }
   .lede { color: #57534a; margin-bottom: 48px; }
+  .row { display: flex; gap: 12px; margin-bottom: 12px; }
   section { padding: 48px 0; border-top: 1px solid #ddd9d0; }
   .card { padding: 20px 24px; background: #fff; border-radius: 10px; margin-bottom: 12px; }
   .cta { display: inline-block; padding: 14px 22px; border-radius: 999px;
@@ -95,6 +96,36 @@
       <div role="button" tabindex="0" class="cta" style="background:#e8e4dc;color:#f6f5f1">Unreadable button</div>
       <p><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24"></p>
       <a href="#pricing" aria-label="Jump back to the pricing section">Labelled link</a>
+    </section>
+
+    <!-- Focus-order traps. Every one of these looks correct in a screenshot
+         and is only wrong to someone using a keyboard. -->
+    <section id="focus-traps">
+      <h2>Focus order traps</h2>
+      <p>Press Tab with inspect mode armed, or Alt+F, to see the order the
+      browser will actually visit these in.</p>
+
+      <!-- A positive tabindex jumps ahead of everything at tabindex 0, so this
+           is visited first no matter where it sits on the page. -->
+      <div class="row">
+        <button class="cta" tabindex="3">Third visually, first by tabindex</button>
+        <button class="cta">Reads second, tabbed later</button>
+      </div>
+
+      <!-- Reversed with flex, so reading order and DOM order disagree. This is
+           the classic one: it looks fine and tabs backwards. -->
+      <div class="row" style="display:flex; flex-direction:row-reverse; gap:12px">
+        <button class="cta">Tabbed first, on the right</button>
+        <button class="cta">Tabbed second, on the left</button>
+      </div>
+
+      <!-- Focusable with no accessible name at all: a screen reader announces
+           "button", and nothing else. -->
+      <button class="cta" aria-hidden="false"></button>
+
+      <!-- A click handler on a plain div, so it is usable with a mouse and
+           unreachable with a keyboard. -->
+      <div class="cta" onclick="void 0">Clickable, not focusable</div>
     </section>
 
     <section>

@@ -10,6 +10,9 @@
 //   2. Every symbol src/inspect-comment.d.ts promises is really exported.
 //      The types are hand-written, so nothing else keeps them honest.
 //   3. The source stays dependency-free and side-effect-free on import.
+//   4. The bookmarklet in docs/ still points at the version being shipped.
+//   5. The MCP server neither imports a package nor writes to stdout, which are
+//      the two ways a stdio server fails with no diagnosable symptom.
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -24,6 +27,7 @@ const ok = (msg) => console.log(`  ok   ${msg}`);
 
 const src = await read("src", "inspect-comment.js");
 const dts = await read("src", "inspect-comment.d.ts");
+const mcp = await read("mcp", "server.mjs");
 const pkg = JSON.parse(await read("package.json"));
 
 /* 1. dist/ matches a fresh build ------------------------------------------ */
@@ -74,6 +78,49 @@ if (/^\s*mount\(\s*\)/m.test(src)) {
   fail("src/inspect-comment.js calls mount() at module scope; importing it must have no side effects.");
 } else {
   ok("importing the core has no side effects");
+}
+
+/* 4. the bookmarklet matches the version in package.json ------------------- */
+
+const { page: bookmarkletPage } = await import("./bookmarklet.mjs");
+const freshBookmarklet = bookmarkletPage(pkg.version);
+const committedBookmarklet = await read("docs", "bookmarklet.md").catch(() => null);
+
+if (committedBookmarklet === null) {
+  fail("docs/bookmarklet.md is missing. Run `npm run bookmarklet`.");
+} else if (committedBookmarklet.replace(/\r\n/g, "\n") !== freshBookmarklet) {
+  fail(`docs/bookmarklet.md does not match v${pkg.version}. Run \`npm run bookmarklet\`.`);
+} else {
+  ok(`bookmarklet pinned to v${pkg.version}`);
+}
+
+/* 5. the MCP server is still a clean stdio server -------------------------- */
+
+// Anything on stdout that is not a JSON-RPC message corrupts the stream, and
+// the client reports it as a parse error naming nothing. This is the single
+// easiest way to break an MCP server, and a stray console.log looks harmless.
+const stdoutWrites = [...mcp.matchAll(/console\.(log|info|debug)\s*\(/g)];
+if (stdoutWrites.length) {
+  fail(`mcp/server.mjs writes to stdout (${stdoutWrites.length}x console.log/info/debug); use log() for stderr.`);
+} else {
+  ok("MCP server keeps stdout for JSON-RPC only");
+}
+
+// The server ships inside the npm package, so a bare import there is a runtime
+// dependency by another name and the zero-dependency claim stops being true.
+const bareImports = [...mcp.matchAll(/^import\s[^;]*?from\s+["']([^"']+)["']/gm)]
+  .map((m) => m[1])
+  .filter((spec) => !spec.startsWith("node:") && !spec.startsWith("."));
+if (bareImports.length) {
+  fail(`mcp/server.mjs imports a package: ${bareImports.join(", ")}`);
+} else {
+  ok("MCP server uses only node: builtins");
+}
+
+if (!pkg.files.includes("mcp/")) {
+  fail("package.json `files` omits mcp/, so `npx inspect-comment-mcp` would resolve to nothing.");
+} else {
+  ok("mcp/ is published");
 }
 
 /* ------------------------------------------------------------------------- */

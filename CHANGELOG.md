@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **MCP server** (`mcp/server.mjs`, `npx inspect-comment-mcp`). Copying a review
+  also posts it to a loopback port, and a coding agent reads it with a tool call
+  instead of the reviewer pasting it. `await_review` blocks until you send one,
+  so "go and mark up the page, I'll wait" works literally. The JSON-RPC is
+  hand-rolled against `node:` builtins, so the repo is still dependency-free.
+- **Focus-order review.** `Alt`+`F` draws the page's real tab order over it,
+  numbered, with a positive `tabindex` marked and out-of-order stops flagged. The
+  sequence follows the HTML spec rather than document order, and walking it never
+  calls `focus()`, so reviewing the order does not disturb the page. Each note
+  carries the element's position.
+- **Keyboard-driven selection.** Inspect mode takes the keyboard: `Tab` walks the
+  focus order, bare arrows walk the tree, `Enter` selects. The tool is now usable
+  without a pointer, which it had no business not being.
+- **Per-note screenshots.** `Shot` attaches a PNG of the element as the browser
+  painted it, via the Screen Capture API rather than a DOM rasteriser, so it adds
+  nothing to the bundle and does not disagree with the browser on transforms,
+  blend modes or canvas content. The MCP server writes each one to disk and the
+  note cites the path.
+- **Bookmarklet** (`docs/bookmarklet.md`), generated from `package.json` and
+  version-checked in CI, so "no install required" is finally one drag.
+
+### Fixed
+
+- `Add ⌘⏎` hardcoded the Mac glyph, so every Windows and Linux reviewer read a
+  shortcut they did not have.
+
 ## 2.0.0
 
 First public release.

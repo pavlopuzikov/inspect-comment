@@ -22,6 +22,41 @@ export interface InspectCommentOptions {
    * so an agent driving the browser can read it without a copy-paste. Default true.
    */
   expose?: boolean;
+  /**
+   * Loopback origin of the MCP server in `mcp/server.mjs`. When one is
+   * listening, copying a review also posts it there, so a coding agent can
+   * fetch the notes instead of the reviewer pasting them.
+   * Default "http://127.0.0.1:7391". Pass false to disable.
+   */
+  bridge?: string | false;
+  /**
+   * Offer a per-note screenshot button. Nothing is captured until the reviewer
+   * presses it, which is also when the browser asks for screen-capture
+   * permission. Default true.
+   */
+  screenshots?: boolean;
+}
+
+/** A PNG crop of one element, as the browser actually painted it. */
+export interface Screenshot {
+  /** `data:image/png;base64,...`, or null when the shot was stripped. */
+  dataUrl: string | null;
+  width: number;
+  height: number;
+  /** True when the element ran past a viewport edge and the crop is partial. */
+  clipped: boolean;
+}
+
+/** One tab stop, in the order the browser will visit it. */
+export interface FocusStop {
+  /** 1-based position in the page's sequential focus navigation order. */
+  index: number;
+  element: string;
+  /** The resolved tabIndex. Anything above 0 jumps the queue. */
+  tabindex: number;
+  name: string | null;
+  /** True when the keyboard position disagrees with the position on screen. */
+  outOfVisualOrder: boolean;
 }
 
 export interface CssChange {
@@ -66,6 +101,12 @@ export interface ElementDescriptor {
   a11y: string | null;
   /** True when `a11y` reports a contrast failure or a missing alt. */
   a11yWarn: boolean;
+  /** Position in the page's focus order, or why the element has none. */
+  focus: string | null;
+  /** True when `focus` reports a positive tabindex or an unnamed control. */
+  focusWarn: boolean;
+  /** Present only once the reviewer pressed Shot for this element. */
+  shot: Screenshot | null;
 }
 
 export interface QueueEntry {
@@ -84,6 +125,12 @@ export interface InspectCommentApi {
   readonly logs: LogEntry[];
   /** Markdown for whatever is queued right now. */
   markdown(): string;
+  /** The MCP server origin if one is answering, otherwise null. */
+  readonly bridge: string | null;
+  /** Every tab stop on the page, in the order the browser will visit them. */
+  focusOrder(): FocusStop[];
+  /** Push the current queue to the MCP server. False if none is listening. */
+  send(): Promise<boolean>;
   /** Revert every live CSS edit without touching the queue. */
   resetStyles(): void;
   /** Remove the UI, restore console/fetch, revert edits, drop every listener. */
