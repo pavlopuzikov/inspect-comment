@@ -43,6 +43,11 @@ SELECT = "#c23a12"        # DEFAULTS.select: the selected outline
 WARN = "#d8a657"
 GOOD = "#4a7c59"
 
+# Text laid over a scrimmed page. PANEL_DIM is tuned against the panel's own
+# near-black; on a 60-odd percent wash over paper the ground is far lighter than
+# that and PANEL_DIM all but disappears into it.
+SCRIM_TEXT = "#cfc9bc"
+
 # ------------------------------------------------------------------- strokes
 
 HAIR = 1.0

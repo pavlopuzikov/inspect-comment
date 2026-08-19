@@ -13,7 +13,7 @@ from manim import (
 )
 
 from theme import (
-    P, px, MONO, BODY, DISPLAY,
+    P, px, PXU, DESIGN_W, DESIGN_H, MONO, BODY, DISPLAY,
     CANVAS, INK, INK_DIM, INK_MUTE, LINE,
     PANEL, PANEL_TEXT, PANEL_DIM, PANEL_LINE, ACCENT, SELECT, WARN,
     HAIR, BOX, OUTLINE,
@@ -45,16 +45,59 @@ def place(m, x, y):
 # text cache keys on the string and the size, so 8x caches like any other.
 OVERSAMPLE = 8
 
+# WHY the oversample is not simply always 8.
+#
+# manim renders every Text onto a Pango page of a fixed size, and a string whose
+# advance runs past that page WRAPS. Nothing raises and nothing warns: the
+# mobject is silently two lines tall, which lands as a layout bug somewhere else
+# entirely. The threshold is a property of the page, not of the render, so it
+# does not move with resolution: "inspect-comment" survives font_size 264 and
+# wraps at 336 at 768, 1280 and 1920 pixels wide alike.
+#
+# 8x is therefore safe for body copy and not safe for a headline. Rather than
+# pick a cutoff and hope, t() renders, measures, and halves the factor until the
+# result is one line. Anything over about 30px hits this, which is every title
+# card in linkedin.py and the mock page's h1.
+_LINE_H = {}
+
+
+def _one_line(size, font, weight):
+    """The height of a single line at this size, cached per style."""
+    key = (round(size, 3), font, weight)
+    if key not in _LINE_H:
+        _LINE_H[key] = Text("Mgy", font=font, font_size=size, weight=weight).height
+    return _LINE_H[key]
+
+
+def _fit(build, size, font, weight="NORMAL"):
+    """
+    Build at OVERSAMPLE, halving until the result is a single line.
+
+    Shared by t() and tracked(): the wrap is a property of manim's Pango page,
+    not of which mobject class asked for the text, and tracked() is the more
+    exposed of the two because letter-spacing widens a string without making it
+    look any closer to the limit.
+    """
+    factor = OVERSAMPLE
+    while True:
+        m = build(factor)
+        if factor == 1 or m.height <= _one_line(size * factor, font, weight) * 1.6:
+            break
+        factor //= 2
+    m.scale(1 / factor)
+    return m
+
 
 def t(s, size=14, color=INK, font=MONO, weight="NORMAL", **kw):
     """
     Text sized in CSS pixels. At this frame geometry manim's font_size and a CSS
     pixel happen to coincide, which is only true because PXU is 80; see theme.
     """
-    m = Text(s, font=font, font_size=size * OVERSAMPLE, color=color,
-             weight=weight, **kw)
-    m.scale(1 / OVERSAMPLE)
-    return m
+    return _fit(
+        lambda f: Text(s, font=font, font_size=size * f, color=color,
+                       weight=weight, **kw),
+        size, font, weight,
+    )
 
 
 def box(w, h, fill=None, stroke=None, sw=HAIR, r=None):
@@ -121,12 +164,16 @@ class MockPage:
         g.add(h1, lede, self.cta)
 
         # cards: note 2 lands on the second one
-        self.cards_bounds = (74, 380, 1132, 190)
+        # 44px of clearance above the cards, not 20. An element's tag is drawn
+        # above its top-left, so a section box that hugs its contents puts a
+        # border straight through every tag inside it.
+        self.cards_bounds = (74, 356, 1132, 220)
         cards = VGroup()
         titles = ("01 / The Long Table", "02 / Nine Objects", "03 / What Remains")
         bodies = ("Where the studio ate", "The working index", "A closing inventory")
+        metas = ("12 min", "9 objects", "Closing")
         self.card_bounds = []
-        for i, (ti, bo) in enumerate(zip(titles, bodies)):
+        for i, (ti, bo, me) in enumerate(zip(titles, bodies, metas)):
             x = 90 + i * 358
             c = box(340, 150, fill="#ffffff", stroke=LINE, r=10)
             place(c, x, 400)
@@ -134,7 +181,15 @@ class MockPage:
             place(ct, x + 24, 428)
             cb = t(bo, 12, INK_MUTE, font=BODY)
             place(cb, x + 24, 456)
-            cards.add(VGroup(c, ct, cb))
+            # A card with its content in the top third and nothing under it
+            # reads as an unfinished layout rather than as a card, and the
+            # animation then looks like it is reviewing a broken page.
+            crule = Line(P(x + 24, 508), P(x + 316, 508), stroke_width=HAIR, color=LINE)
+            cm = t(me, 10, INK_MUTE)
+            place(cm, x + 24, 520)
+            arrow = t("->", 10, INK_MUTE)
+            place(arrow, x + 300, 520)
+            cards.add(VGroup(c, ct, cb, crule, cm, arrow))
             self.card_bounds.append((x, 400, 340, 150))
         self.cards = cards
         g.add(cards)
@@ -151,27 +206,36 @@ class MockPage:
 # ------------------------------------------------------------- tool chrome
 
 
+TAG_H = 20
+
+
+def tag(label, fill, size=11, pad_x=8):
+    """The small dark chip a label sits in. One definition, so every tag in
+    every scene is the same height and the same corner."""
+    lt = t(label, size, "#f6f5f1")
+    bg = RoundedRectangle(
+        width=lt.width + px(pad_x * 2), height=px(TAG_H),
+        corner_radius=px(3), fill_color=fill, fill_opacity=1, stroke_width=0,
+    )
+    lt.move_to(bg.get_center())
+    return VGroup(bg, lt)
+
+
 def outline(bounds, color, label=None, dashed=False):
     """The tool's highlight: a coloured box with a tag above its top-left."""
     x, y, w, h = bounds
     r = Rectangle(
         width=px(w), height=px(h),
         stroke_color=color, stroke_width=OUTLINE,
-        fill_color=color, fill_opacity=0.10,
+        # 0.10 of a slate blue over white is just grey, and a grey wash reads as
+        # a disabled state rather than as a highlight. The outline carries the
+        # signal; the fill only has to separate the element from the page.
+        fill_color=color, fill_opacity=0.07,
     )
     place(r, x, y)
     g = VGroup(r)
     if label:
-        pad_w, pad_h = 8, 16
-        tag_t = t(label, 11, "#f6f5f1")
-        bg = RoundedRectangle(
-            width=tag_t.width + px(pad_w * 2), height=px(pad_h + 8),
-            corner_radius=px(3), fill_color=PANEL, fill_opacity=1, stroke_width=0,
-        )
-        tag = VGroup(bg, tag_t)
-        tag_t.move_to(bg.get_center())
-        place(tag, x, y - (pad_h + 10))
-        g.add(tag)
+        g.add(place(tag(label, PANEL), x, y - (TAG_H + 5)))
     return g
 
 
@@ -184,15 +248,11 @@ def section_outline(bounds, label):
         fill_color=ACCENT, fill_opacity=0.04,
     )
     place(r, x, y)
-    lt = t(label, 10, "#f6f5f1")
-    bg = RoundedRectangle(
-        width=lt.width + px(14), height=px(18), corner_radius=px(2),
-        fill_color=ACCENT, fill_opacity=1, stroke_width=0,
-    )
-    lt.move_to(bg.get_center())
-    tag = VGroup(bg, lt)
-    place(tag, x + w - (lt.width * 80 + 14), y)
-    return VGroup(r, tag)
+    lab = tag(label, ACCENT, size=10, pad_x=7)
+    # Inset off both borders. Flush against the corner the chip and the border
+    # share an edge, which reads as a rendering seam rather than as a label.
+    place(lab, x + w - lab.width * PXU - 6, y + 6)
+    return VGroup(r, lab)
 
 
 def badge(n, bounds):
@@ -206,12 +266,15 @@ def badge(n, bounds):
     place(r, x, y)
     nt = t(str(n), 11, "#f6f5f1")
     bg = RoundedRectangle(
-        width=px(18), height=px(18), corner_radius=px(2),
+        width=px(20), height=px(20), corner_radius=px(10),
         fill_color=SELECT, fill_opacity=1, stroke_width=0,
     )
     nt.move_to(bg.get_center())
     chip = VGroup(bg, nt)
-    place(chip, x, y)
+    # Outside the top-left corner, not on it. Sitting on the corner the marker
+    # covers the first characters of whatever it marks, which on the CTA is the
+    # label the note is about.
+    place(chip, x - 26, y)
     return VGroup(r, chip)
 
 
@@ -245,13 +308,18 @@ def tracked(s, size, color, em=0.08, font=MONO):
     it has to be scaled by OVERSAMPLE alongside the glyphs; otherwise the
     tracking is divided away when the result is scaled back down.
     """
-    spacing = int(em * px(size) * _pango_k())
-    m = MarkupText(
-        f'<span letter_spacing="{spacing}">{s}</span>',
-        font=font, font_size=size * OVERSAMPLE, color=color,
-    )
-    m.scale(1 / OVERSAMPLE)
-    return m
+    # _pango_k was measured at font_size = size * OVERSAMPLE, so the spacing it
+    # yields is correct only at that factor. _fit may render at a smaller one,
+    # and Pango's spacing is an absolute advance, so it has to move with the
+    # factor or the tracking changes when a long string is stepped down.
+    def build(f):
+        spacing = int(em * px(size) * _pango_k() * f / OVERSAMPLE)
+        return MarkupText(
+            f'<span letter_spacing="{spacing}">{s}</span>',
+            font=font, font_size=size * f, color=color,
+        )
+
+    return _fit(build, size, font)
 
 
 def shadow(shape, spread=6, offset=6, opacity=0.25, steps=5):
@@ -357,21 +425,14 @@ def panel(lines, comment=None, changes=None, width=340):
         ch.arrange(DOWN, buff=px(5), aligned_edge=LEFT)
         body.add(ch)
 
+    field = None
     if comment is not None:
         field = RoundedRectangle(
             width=px(width - pad * 2), height=px(52), corner_radius=px(8),
             fill_color="#0f0e0d", fill_opacity=1,
             stroke_color=PANEL_LINE, stroke_width=HAIR,
         )
-        # The field is a fixed width, so the comment has to be measured against
-        # it rather than estimated from a per-character guess, which was wrong by
-        # enough to run the text past the panel edge.
-        ct = t(comment, 11, PANEL_TEXT)
-        room = field.width - px(20)
-        if ct.width > room:
-            ct.scale(room / ct.width)
-        ct.move_to(field.get_corner(UP + LEFT) + RIGHT * (ct.width / 2 + px(10)) + DOWN * px(16))
-        body.add(VGroup(field, ct))
+        body.add(field)
 
     body.arrange(DOWN, buff=px(10), aligned_edge=LEFT)
 
@@ -380,6 +441,39 @@ def panel(lines, comment=None, changes=None, width=340):
         fill_color=PANEL, fill_opacity=1, stroke_width=0,
     )
     body.move_to(bg.get_center())
-    # left-align the stack inside the panel
-    body.shift(RIGHT * (px(pad) + body.width / 2 - bg.width / 2 + px(pad) / 2))
-    return VGroup(shadow(bg, spread=14, offset=12, opacity=0.4), bg, body)
+    # Left-align the stack against the padding box. The old expression added
+    # pad*1.5, which left the content a few pixels off the optical left edge and
+    # made the panel look like it had a wider right margin than left.
+    body.align_to(bg, LEFT).shift(RIGHT * px(pad))
+    g = VGroup(shadow(bg, spread=14, offset=12, opacity=0.4), bg, body)
+    g.bg, g.field = bg, field
+    if comment:
+        g.add(comment_text(g, comment))
+    return g
+
+
+def comment_text(p, s, size=11):
+    """
+    A line of typed comment, laid inside a panel's comment field.
+
+    WHY this is not two lines at the call site: the obvious anchor for it is
+    p[0], and p[0] is the shadow, not the panel. The shadow is wider than the
+    panel and sits lower, so text placed against it lands outside the field near
+    the panel's bottom edge, which is exactly where it was landing.
+    """
+    m = t(s, size, PANEL_TEXT)
+    room = p.field.width - px(20)
+    if m.width > room:
+        m.scale(room / m.width)
+    m.move_to(p.field.get_corner(UP + LEFT)
+              + RIGHT * (m.width / 2 + px(10)) + DOWN * px(16))
+    return m
+
+
+def scrim(opacity=0.55, color="#0f0e0d"):
+    """A full-frame wash, for the beats where the page is context and the thing
+    on top of it is the subject."""
+    return Rectangle(
+        width=px(DESIGN_W) + 0.2, height=px(DESIGN_H) + 0.2,
+        fill_color=color, fill_opacity=opacity, stroke_width=0,
+    )

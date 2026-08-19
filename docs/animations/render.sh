@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Render every scene to an optimised GIF in docs/media/.
 #
-#   ./render.sh            all three scenes
-#   ./render.sh TheLoop    just one
+#   ./render.sh             all three README scenes
+#   ./render.sh TheLoop     just one
+#   ./render.sh LinkedIn    the 16:9 social cut, as mp4
 #
 # manim emits MP4; GitHub will not play a repo-relative <video> in a README but
-# renders a GIF inline anywhere, so the MP4 is an intermediate and the GIF is
-# the artifact. The two-pass palette is what keeps flat colour flat: a single
-# pass quantises the paper background into visible banding.
+# renders a GIF inline anywhere, so for the README scenes the MP4 is an
+# intermediate and the GIF is the artifact. The two-pass palette is what keeps
+# flat colour flat: a single pass quantises the paper background into visible
+# banding.
 
 set -euo pipefail
 
@@ -35,14 +37,39 @@ slug() {
   sed -E 's/([a-z0-9])([A-Z])/\1-\2/g' <<<"$1" | tr '[:upper:]' '[:lower:]'
 }
 
+# LinkedIn lives in its own module and ships as mp4, not gif. It is 1920x1080
+# and about 43 seconds, which as a GIF would run to tens of megabytes, and
+# nothing outside a README needs a GIF anyway.
+module_for() {
+  if [ "$1" = "LinkedIn" ]; then echo linkedin.py; else echo scenes.py; fi
+}
+
 for scene in "${SCENES[@]}"; do
   echo "==> $scene"
-  manim render $QUALITY --format mp4 scenes.py "$scene"
+  manim render $QUALITY --format mp4 --media_dir "$SCRATCH" "$(module_for "$scene")" "$scene"
 
-  mp4=$(find "${IC_MEDIA_DIR:-${TMPDIR:-/tmp}/inspect-comment-anim}" \
-        -name "${scene}.mp4" -print -quit 2>/dev/null || true)
+  # Most recent, not first found: rendering the same scene at another size
+  # leaves an older file of the same name elsewhere in the scratch tree, and
+  # -print -quit would happily return that one.
+  mp4=$(find "$SCRATCH" -name "${scene}.mp4" -printf "%T@ %p\n" 2>/dev/null \
+        | sort -rn | head -1 | cut -d" " -f2-)
   if [ -z "$mp4" ]; then
-    echo "    no mp4 found for $scene, skipping gif" >&2
+    echo "    no mp4 found for $scene, skipping" >&2
+    continue
+  fi
+
+  if [ "$scene" = "LinkedIn" ]; then
+    out="$OUT/linkedin.mp4"
+    # Re-encoded rather than copied. manim writes a high-bitrate intermediate,
+    # and LinkedIn re-encodes on upload regardless, so handing it a clean
+    # yuv420p h264 is the difference between one generation of loss and two.
+    # yuv420p specifically: manim can emit yuv444p, which Safari will not play.
+    ffmpeg -v error -y -i "$mp4" \
+      -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart \
+      -r 30 "$out"
+    printf "    %s  %s  %s\n" "$out" "$(du -h "$out" | cut -f1)" \
+      "$(ffprobe -v error -select_streams v -show_entries stream=width,height \
+         -of csv=p=0 "$out")"
     continue
   fi
 

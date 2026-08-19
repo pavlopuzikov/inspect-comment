@@ -8,3 +8,8 @@
 # Generated. Collapse it in diffs and exclude it from language stats; the review
 # happens in src/.
 dist/inspect-comment.js linguist-generated=true -diff
+
+# Rendered animation output. text=auto above sniffs these correctly today, but
+# an mp4 that ever trips the heuristic would be corrupted by eol conversion
+# rather than merely diffed noisily, so say it outright.
+docs/media/** binary

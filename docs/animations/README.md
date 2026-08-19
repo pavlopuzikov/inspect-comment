@@ -6,9 +6,12 @@ tool itself: nothing here ships in the package, and `docs/` is excluded from the
 
 ```bash
 pip install manim            # 0.21 or later
-./render.sh                  # all three, into ../media/
+./render.sh                  # the three README gifs, into ../media/
 ./render.sh TheLoop          # just one
+./render.sh LinkedIn         # the 16:9 social cut, as ../media/linkedin.mp4
 manim render -s -qm probe.py Probe   # one still, to check layout fast
+
+IC_SCALE=0.5 ./render.sh LinkedIn    # draft: same layout, a quarter of the wait
 ```
 
 | Scene | What it argues |
@@ -16,8 +19,18 @@ manim render -s -qm probe.py Probe   # one still, to check layout fast
 | `TheLoop` | The whole product in one pass: hover, click, comment, queue, copy. |
 | `OneClick` | What a single click captures, field by field. |
 | `ServerComponents` | Why naming a React Server Component is the hard part, and what reading `_debugInfo` gets you. |
+| `LinkedIn` | The 16:9 social cut. Six beats, ships as mp4, lives in `linkedin.py`. |
 
-## Four things that will bite
+`LinkedIn` is the odd one. The three above it are README GIFs, read on mute at
+whatever width a GitHub column happens to be; it is read in a feed, at full
+width, by someone who has never heard of the tool. So it carries a title card, a
+stated problem and an outro, its type runs a step larger throughout, and it
+renders at 1920x1080 rather than 1280x720. It reuses the same `MockPage`,
+`panel` and `dock`, so the two never drift into looking like different products.
+`IC_SCALE` sets the render size; `PXU` is pinned to the design size, so a draft
+at 0.5 puts everything in exactly the same place, only smaller.
+
+## Five things that will bite
 
 Every one of these fails silently. None of them raises, and none of them looks
 like the thing that is actually wrong, so they are written down here.
@@ -47,6 +60,19 @@ lands back near the origin, stacked on top of the lines above. Place lines at a
 fixed leading instead, which is what a monospace listing wants anyway:
 `arrange()` spaces by bounding box, so a line with no descender sits tighter
 than one with parentheses in it.
+
+**Text past a certain width wraps, silently.** manim renders every `Text` onto
+a Pango page of a fixed size, and a string whose advance runs past that page
+wraps rather than overflowing. Nothing raises and nothing warns; the mobject is
+simply two lines tall, and it lands as a layout bug somewhere else entirely. The
+threshold is a property of the page and not of the render, so it does not move
+with resolution: `inspect-comment` survives `font_size` 264 and wraps at 336 at
+768, 1280 and 1920 pixels wide alike. Which means `OVERSAMPLE` is the thing that
+trips it. 8x is safe for body copy and not safe for a headline, and `tracked()`
+is worse off than `t()`, because letter-spacing widens a string without making
+it look any closer to the limit. `_fit()` renders, measures against a
+single-line height, and halves the factor until the result is one line. Do not
+call `Text` directly here; go through `t()` or `tracked()`.
 
 **The text cache poisons itself.** Manim hashes every string to an SVG under
 `media_dir/texts/` and never re-checks a file it finds there. Interrupt a render
